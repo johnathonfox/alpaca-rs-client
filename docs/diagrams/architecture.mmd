@@ -1,0 +1,34 @@
+flowchart LR
+    subgraph alpaca-rs
+        lib[lib.rs<br/>public exports]
+        subgraph infra [shared infrastructure]
+            cred[Credentials<br/>API key / OAuth bearer]
+            rest[RestClient<br/>auth, pagination, retry]
+            err[Error / Result]
+        end
+        subgraph trading [trading/]
+            tc[TradingClient<br/>orders, positions, account,<br/>assets, watchlists, ...]
+        end
+        subgraph data [data/]
+            stock[StockHistoricalDataClient]
+            crypto[CryptoHistoricalDataClient]
+            option[OptionHistoricalDataClient]
+            news[NewsClient]
+            screen[ScreenerClient]
+            ca[CorporateActionsClient]
+        end
+        subgraph stream [stream/]
+            mds[MarketDataStream<br/>stocks / crypto / options / news]
+            ts[TradingStream<br/>trade_updates]
+        end
+    end
+
+    tc -->|REST /v2| tapi[api / paper-api<br/>.alpaca.markets]
+    stock & crypto & option & news & screen & ca -->|REST| dapi[data.alpaca.markets]
+    mds -->|WSS JSON| sdata[stream.data.alpaca.markets]
+    ts -->|WSS JSON| tapi
+
+    lib --> trading & data & stream
+    trading & data --> infra
+    stream --> cred
+    stream --> err
