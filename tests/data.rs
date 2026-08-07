@@ -128,20 +128,20 @@ async fn stock_latest_trades_parses_per_symbol_map() -> Result<()> {
 async fn stock_snapshots_parses_single_page() -> Result<()> {
     let server = MockServer::start().await;
 
+    // `GET /v2/stocks/snapshots` returns the symbol-keyed map at the top
+    // level, with no `snapshots` wrapper and no `next_page_token` — verified
+    // against the live endpoint. Crypto and options nest theirs instead.
     let body = json!({
-        "snapshots": {
-            "AAPL": {
-                "latestTrade": {"t": "2024-07-24T19:59:59.639Z", "p": 224.62, "s": 4.0,
-                                "x": "Q", "i": 52983525029461_i64, "c": ["@"], "z": "C"},
-                "latestQuote": {"t": "2024-07-24T19:59:59.639Z", "bp": 224.6, "bs": 3.0,
-                                "ap": 224.65, "as": 5.0, "bx": "P", "ax": "Q",
-                                "c": ["R"], "z": "C"},
-                "minuteBar": bar_json("2024-07-24T19:59:00Z", 224.62),
-                "dailyBar": bar_json("2024-07-24T04:00:00Z", 224.62),
-                "prevDailyBar": bar_json("2024-07-23T04:00:00Z", 223.9)
-            }
-        },
-        "next_page_token": null
+        "AAPL": {
+            "latestTrade": {"t": "2024-07-24T19:59:59.639Z", "p": 224.62, "s": 4.0,
+                            "x": "Q", "i": 52983525029461_i64, "c": ["@"], "z": "C"},
+            "latestQuote": {"t": "2024-07-24T19:59:59.639Z", "bp": 224.6, "bs": 3.0,
+                            "ap": 224.65, "as": 5.0, "bx": "P", "ax": "Q",
+                            "c": ["R"], "z": "C"},
+            "minuteBar": bar_json("2024-07-24T19:59:00Z", 224.62),
+            "dailyBar": bar_json("2024-07-24T04:00:00Z", 224.62),
+            "prevDailyBar": bar_json("2024-07-23T04:00:00Z", 223.9)
+        }
     });
     auth(Mock::given(method("GET")))
         .and(path("/v2/stocks/snapshots"))

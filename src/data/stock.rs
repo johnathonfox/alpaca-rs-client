@@ -107,9 +107,15 @@ impl StockHistoricalDataClient {
     ///
     /// Follows `next_page_token` and returns all pages merged.
     pub async fn snapshots(&self, req: &LatestRequest) -> Result<SnapshotsResponse> {
-        self.rest
-            .get_paginated("/v2/stocks/snapshots", req, None)
-            .await
+        // Unlike the crypto and options snapshot endpoints, this one returns
+        // the symbol-keyed map at the *top level* rather than nested under a
+        // `snapshots` key, and it does not paginate. Decode the bare map and
+        // wrap it so the return type stays consistent across the clients.
+        let snapshots = self.rest.get("/v2/stocks/snapshots", req).await?;
+        Ok(SnapshotsResponse {
+            snapshots,
+            next_page_token: None,
+        })
     }
 
     /// `GET /v2/stocks/auctions` — historical opening and closing auction
