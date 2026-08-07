@@ -6,9 +6,11 @@
 //! - [`trading`]: account, orders, positions, assets, watchlists, corporate
 //!   actions and option contracts (`TradingClient`).
 //! - [`data`]: historical and latest market data for stocks, crypto, options
-//!   and news, plus the screener and corporate actions endpoints.
+//!   and news, plus the screener, corporate actions, forex rates and logo
+//!   endpoints.
 //! - [`stream`]: WebSocket streams for real-time market data and trading
-//!   updates.
+//!   updates, plus Server-Sent Event streams for account activities and
+//!   corporate actions.
 //! - [`rest`]: credentials handling ([`rest::Credentials`]) shared by all
 //!   clients.
 //!
@@ -22,3 +24,12 @@ pub mod stream;
 pub mod trading;
 
 pub use error::{Error, Result};
+
+/// Compiles the code blocks in `README.md` as doctests so the examples there
+/// cannot drift out of sync with the API.
+///
+/// `cfg(doctest)` is set only while collecting doctests, so this item is absent
+/// from normal builds and from the rendered documentation.
+#[cfg(doctest)]
+#[doc = include_str!("../README.md")]
+struct ReadmeDoctests;

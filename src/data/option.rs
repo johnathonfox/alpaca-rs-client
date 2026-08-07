@@ -5,10 +5,10 @@
 
 use serde::Serialize;
 
-use super::enums::OptionsFeed;
+use super::enums::{OptionsFeed, TickType};
 use super::models::{
-    BarsResponse, LatestQuotesResponse, LatestTradesResponse, OptionExchangesResponse,
-    SnapshotsResponse, TradesResponse,
+    BarsResponse, ConditionsResponse, LatestQuotesResponse, LatestTradesResponse,
+    OptionExchangesResponse, SnapshotsResponse, TradesResponse,
 };
 use super::requests::{BarsRequest, LatestRequest, TradesRequest};
 use crate::error::Result;
@@ -165,5 +165,16 @@ impl OptionHistoricalDataClient {
     /// `GET /v1beta1/options/meta/exchanges` — option exchange code mapping.
     pub async fn exchanges(&self) -> Result<OptionExchangesResponse> {
         self.rest.get("/v1beta1/options/meta/exchanges", &()).await
+    }
+
+    /// `GET /v1beta1/options/meta/conditions/{ticktype}` — option condition
+    /// code table for trades or quotes.
+    pub async fn conditions(&self, tick_type: TickType) -> Result<ConditionsResponse> {
+        self.rest
+            .get(
+                &format!("/v1beta1/options/meta/conditions/{}", tick_type.as_str()),
+                &(),
+            )
+            .await
     }
 }

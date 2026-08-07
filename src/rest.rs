@@ -52,6 +52,18 @@ impl Credentials {
             Credentials::OAuth(token) => (token, ""),
         }
     }
+
+    /// Adds the authentication headers for these credentials to an HTTP
+    /// request: the `APCA-API-*` pair for key credentials, a bearer token for
+    /// OAuth ones.
+    pub(crate) fn authenticate(&self, req: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
+        match self {
+            Credentials::Key { key_id, secret_key } => req
+                .header("APCA-API-KEY-ID", key_id)
+                .header("APCA-API-SECRET-KEY", secret_key),
+            Credentials::OAuth(token) => req.bearer_auth(token),
+        }
+    }
 }
 
 /// Percent-encodes a single URL path segment (e.g. symbols such as
@@ -175,22 +187,25 @@ impl RestClient {
     }
 
     fn auth(&self, req: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
-        match &self.creds {
-            Credentials::Key { key_id, secret_key } => req
-                .header("APCA-API-KEY-ID", key_id)
-                .header("APCA-API-SECRET-KEY", secret_key),
-            Credentials::OAuth(token) => req.bearer_auth(token),
-        }
+        self.creds.authenticate(req)
     }
 
     async fn send<T: DeserializeOwned>(&self, req: reqwest::RequestBuilder) -> Result<T> {
+        Self::decode(self.send_raw(req).await?).await
+    }
+
+    /// Authenticates and sends a request, retrying transient failures, and
+    /// hands back the final response without interpreting its body. Used by
+    /// [`send`](Self::send) and by the endpoints that return something other
+    /// than JSON.
+    async fn send_raw(&self, req: reqwest::RequestBuilder) -> Result<reqwest::Response> {
         let req = self.auth(req);
         let mut attempt = 1;
         loop {
             // All bodies are in-memory (JSON or query), so cloning always
             // succeeds; if it somehow doesn't, fall back to a single try.
             let Some(cloned) = req.try_clone() else {
-                return Self::decode(req.send().await?).await;
+                return Ok(req.send().await?);
             };
             match cloned.send().await {
                 Ok(resp) => {
@@ -205,7 +220,7 @@ impl RestClient {
                             tokio::time::sleep(delay).await;
                             attempt += 1;
                         }
-                        None => return Self::decode(resp).await,
+                        None => return Ok(resp),
                     }
                 }
                 Err(err) => match retry_delay(attempt).filter(|_| is_retryable_error(&err)) {
@@ -273,13 +288,50 @@ impl RestClient {
         .await
     }
 
+    /// Issues a GET request and returns the raw response body together with
+    /// its `Content-Type` header, for the endpoints that answer with
+    /// something other than JSON (e.g. logo images).
+    pub(crate) async fn get_bytes(
+        &self,
+        path: &str,
+        query: &(impl Serialize + ?Sized),
+    ) -> Result<(Vec<u8>, Option<String>)> {
+        let req = self.http.get(self.url(path)?).query(query);
+        let resp = self.send_raw(req).await?;
+        let status = resp.status();
+        let content_type = resp
+            .headers()
+            .get(reqwest::header::CONTENT_TYPE)
+            .and_then(|value| value.to_str().ok())
+            .map(str::to_owned);
+        let body = resp.bytes().await?;
+        if !status.is_success() {
+            return Err(Error::Api {
+                status: status.as_u16(),
+                message: String::from_utf8_lossy(&body).into_owned(),
+            });
+        }
+        Ok((body.to_vec(), content_type))
+    }
+
     /// Issues a POST request with a JSON body.
     pub(crate) async fn post<T: DeserializeOwned>(
         &self,
         path: &str,
         body: &(impl Serialize + ?Sized),
     ) -> Result<T> {
-        let req = self.http.post(self.url(path)?).json(body);
+        self.post_with_query(path, &(), body).await
+    }
+
+    /// Issues a POST request with both a serialized query string and a JSON
+    /// body, as the `:by_name` watchlist endpoints require.
+    pub(crate) async fn post_with_query<T: DeserializeOwned>(
+        &self,
+        path: &str,
+        query: &(impl Serialize + ?Sized),
+        body: &(impl Serialize + ?Sized),
+    ) -> Result<T> {
+        let req = self.http.post(self.url(path)?).query(query).json(body);
         self.send(req).await
     }
 
@@ -299,7 +351,18 @@ impl RestClient {
         path: &str,
         body: &(impl Serialize + ?Sized),
     ) -> Result<T> {
-        let req = self.http.put(self.url(path)?).json(body);
+        self.put_with_query(path, &(), body).await
+    }
+
+    /// Issues a PUT request with both a serialized query string and a JSON
+    /// body, as the `:by_name` watchlist endpoints require.
+    pub(crate) async fn put_with_query<T: DeserializeOwned>(
+        &self,
+        path: &str,
+        query: &(impl Serialize + ?Sized),
+        body: &(impl Serialize + ?Sized),
+    ) -> Result<T> {
+        let req = self.http.put(self.url(path)?).query(query).json(body);
         self.send(req).await
     }
 

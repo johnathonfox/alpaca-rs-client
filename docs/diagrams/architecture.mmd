@@ -7,7 +7,7 @@ flowchart LR
             err[Error / Result]
         end
         subgraph trading [trading/]
-            tc[TradingClient<br/>orders, positions, account,<br/>assets, watchlists, ...]
+            tc[TradingClient<br/>orders incl. multi-leg, positions,<br/>account, activities, assets,<br/>locates, watchlists, ...]
         end
         subgraph data [data/]
             stock[StockHistoricalDataClient]
@@ -16,17 +16,22 @@ flowchart LR
             news[NewsClient]
             screen[ScreenerClient]
             ca[CorporateActionsClient]
+            fx[ForexClient]
+            logo[LogoClient<br/>image bytes, not JSON]
         end
         subgraph stream [stream/]
             mds[MarketDataStream<br/>stocks / crypto / options / news]
             ts[TradingStream<br/>trade_updates]
+            sse[EventStream + SseParser<br/>ActivityEventsClient,<br/>CorporateActionEventsClient]
         end
     end
 
-    tc -->|REST /v2| tapi[api / paper-api<br/>.alpaca.markets]
-    stock & crypto & option & news & screen & ca -->|REST| dapi[data.alpaca.markets]
+    tc -->|REST /v1 /v2 /v3| tapi[api / paper-api<br/>.alpaca.markets]
+    stock & crypto & option & news & screen & ca & fx & logo -->|REST| dapi[data.alpaca.markets]
     mds -->|WSS JSON| sdata[stream.data.alpaca.markets]
     ts -->|WSS JSON| tapi
+    sse -->|SSE /v2beta1/events/activities| tapi
+    sse -->|SSE /v1beta1/events/corporate-actions| dapi
 
     lib --> trading & data & stream
     trading & data --> infra

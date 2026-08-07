@@ -8,10 +8,14 @@ pub mod models;
 pub mod requests;
 
 mod activities;
+mod locates;
+mod watchlists_by_name;
 
 pub use enums::*;
 pub use models::*;
 pub use requests::*;
+
+use chrono::{DateTime, Utc};
 
 use crate::error::Result;
 use crate::rest::{Credentials, RestClient, encode_segment};
@@ -166,6 +170,24 @@ impl TradingClient {
             .await
     }
 
+    /// `POST /v2/positions/{symbol_or_contract_id}/do-not-exercise` — submits
+    /// a do-not-exercise instruction for a long option position.
+    ///
+    /// By default Alpaca auto-exercises contracts that expire in the money by
+    /// at least $0.01; this suppresses that for the given contract. The
+    /// endpoint returns an empty body on success.
+    pub async fn do_not_exercise_option(&self, symbol_or_contract_id: &str) -> Result<()> {
+        self.rest
+            .post(
+                &format!(
+                    "/v2/positions/{}/do-not-exercise",
+                    encode_segment(symbol_or_contract_id)
+                ),
+                &serde_json::json!({}),
+            )
+            .await
+    }
+
     /// `GET /v2/account/portfolio/history` — returns portfolio equity
     /// history.
     pub async fn get_portfolio_history(
@@ -198,6 +220,54 @@ impl TradingClient {
     /// `GET /v2/calendar` — returns the market calendar.
     pub async fn get_calendar(&self, req: &CalendarRequest) -> Result<Vec<CalendarDay>> {
         self.rest.get("/v2/calendar", req).await
+    }
+
+    /// `GET /v3/clock` — returns the current clock of each of the given
+    /// markets, including the session (phase) each one is in.
+    ///
+    /// The multi-market successor to [`get_clock`](Self::get_clock), which
+    /// keeps serving the single-market `/v2` clock. An empty `markets` slice
+    /// omits the parameter and leaves the selection to the API.
+    ///
+    /// Use [`get_clock_v3_at`](Self::get_clock_v3_at) to ask what the clocks
+    /// look like at some other point in time.
+    pub async fn get_clock_v3(&self, markets: &[Market]) -> Result<ClockV3Response> {
+        self.rest
+            .get("/v3/clock", &ClockV3Query::new(markets, None))
+            .await
+    }
+
+    /// `GET /v3/clock` evaluated at `time` instead of now — otherwise
+    /// identical to [`get_clock_v3`](Self::get_clock_v3).
+    pub async fn get_clock_v3_at(
+        &self,
+        markets: &[Market],
+        time: DateTime<Utc>,
+    ) -> Result<ClockV3Response> {
+        self.rest
+            .get("/v3/clock", &ClockV3Query::new(markets, Some(time)))
+            .await
+    }
+
+    /// `GET /v3/calendar/{market}` — returns the trading calendar of a single
+    /// market, with each day's pre/core/post (and, where applicable, lunch)
+    /// sessions.
+    ///
+    /// The multi-market successor to [`get_calendar`](Self::get_calendar),
+    /// which keeps serving the US-only `/v2` calendar. The range defaults to
+    /// one week from today; widen it via
+    /// [`CalendarV3Request::start`]/[`end`](CalendarV3Request::end).
+    pub async fn get_calendar_v3(
+        &self,
+        market: &Market,
+        req: &CalendarV3Request,
+    ) -> Result<CalendarV3Response> {
+        self.rest
+            .get(
+                &format!("/v3/calendar/{}", encode_segment(market.as_str())),
+                req,
+            )
+            .await
     }
 
     /// `GET /v2/watchlists` — lists all watchlists.

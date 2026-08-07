@@ -140,6 +140,10 @@ impl TradesRequest {
 /// [`TradesRequest`]).
 pub type QuotesRequest = TradesRequest;
 
+/// Query parameters for the historical auctions endpoints (same shape as
+/// [`TradesRequest`]; only [`DataFeed::Sip`] is a valid `feed`).
+pub type AuctionsRequest = TradesRequest;
+
 /// Query parameters for the "latest" endpoints (trades, quotes, bars,
 /// orderbooks, snapshots).
 #[derive(Debug, Clone, Serialize)]
@@ -259,6 +263,74 @@ impl Default for MarketMoversRequest {
     /// Top 10 stock movers, mirroring the API defaults.
     fn default() -> Self {
         Self::new(MarketType::Stocks, 10)
+    }
+}
+
+/// Query parameters for the historical forex rates endpoint.
+///
+/// Currency pairs are the concatenated ISO 4217 codes of the base and quote
+/// currency (e.g. `USDJPY`).
+#[derive(Debug, Clone, Serialize)]
+pub struct ForexRatesRequest {
+    /// Comma-separated currency pairs.
+    pub currency_pairs: String,
+    /// Rate timeframe (the API defaults to `1Day`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub timeframe: Option<TimeFrame>,
+    /// Start of the time range (RFC3339).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub start: Option<DateTime<Utc>>,
+    /// End of the time range (RFC3339).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub end: Option<DateTime<Utc>>,
+    /// Maximum number of rates per currency pair.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub limit: Option<u32>,
+    /// Sort direction.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sort: Option<Sort>,
+    /// Pagination token.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub page_token: Option<String>,
+}
+
+impl ForexRatesRequest {
+    /// Creates a request for the given currency pairs; all other parameters
+    /// default to `None` and can be set directly.
+    pub fn new<I, S>(currency_pairs: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<str>,
+    {
+        Self {
+            currency_pairs: join_symbols(currency_pairs),
+            timeframe: None,
+            start: None,
+            end: None,
+            limit: None,
+            sort: None,
+            page_token: None,
+        }
+    }
+}
+
+/// Query parameters for the latest forex rates endpoint.
+#[derive(Debug, Clone, Serialize)]
+pub struct LatestForexRatesRequest {
+    /// Comma-separated currency pairs.
+    pub currency_pairs: String,
+}
+
+impl LatestForexRatesRequest {
+    /// Creates a request for the given currency pairs.
+    pub fn new<I, S>(currency_pairs: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<str>,
+    {
+        Self {
+            currency_pairs: join_symbols(currency_pairs),
+        }
     }
 }
 
@@ -422,6 +494,27 @@ mod tests {
         assert!(qs.contains("limit=1000"), "qs: {qs}");
         assert!(!qs.contains("page_token"), "qs: {qs}");
         assert!(!qs.contains("end="), "qs: {qs}");
+    }
+
+    #[test]
+    fn forex_rates_request_serializes_query_params() {
+        let mut req = ForexRatesRequest::new(["USDJPY", "USDMXN"]);
+        req.timeframe = Some(TimeFrame::new(1, TimeFrameUnit::Hour).unwrap());
+        req.sort = Some(Sort::Desc);
+        req.limit = Some(500);
+        let qs = serde_urlencoded_like(&req);
+        assert!(qs.contains("currency_pairs=USDJPY%2CUSDMXN"), "qs: {qs}");
+        assert!(qs.contains("timeframe=1Hour"), "qs: {qs}");
+        assert!(qs.contains("sort=desc"), "qs: {qs}");
+        assert!(qs.contains("limit=500"), "qs: {qs}");
+        assert!(!qs.contains("start"), "qs: {qs}");
+        assert!(!qs.contains("page_token"), "qs: {qs}");
+    }
+
+    #[test]
+    fn latest_forex_rates_request_serializes_currency_pairs() {
+        let req = LatestForexRatesRequest::new(["USDJPY"]);
+        assert_eq!(serde_urlencoded_like(&req), "currency_pairs=USDJPY");
     }
 
     #[test]

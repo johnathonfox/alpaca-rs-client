@@ -7,7 +7,7 @@
 use std::collections::HashMap;
 
 use chrono::{DateTime, NaiveDate, Utc};
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 
 use super::enums::MarketType;
 use crate::rest::PaginatedResponse;
@@ -154,6 +154,40 @@ pub struct Orderbook {
     pub asks: Vec<OrderbookEntry>,
 }
 
+/// A single opening or closing auction print.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct AuctionPrice {
+    /// Auction timestamp (RFC3339).
+    #[serde(rename = "t")]
+    pub timestamp: DateTime<Utc>,
+    /// Exchange code.
+    #[serde(rename = "x")]
+    pub exchange: Option<String>,
+    /// Auction price.
+    #[serde(rename = "p")]
+    pub price: f64,
+    /// Auction size, when reported.
+    #[serde(rename = "s")]
+    pub size: Option<f64>,
+    /// Auction condition code.
+    #[serde(rename = "c")]
+    pub condition: Option<String>,
+}
+
+/// The opening and closing auctions of one symbol on one trading day.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Auction {
+    /// Trading day the auctions belong to.
+    #[serde(rename = "d")]
+    pub date: NaiveDate,
+    /// Opening auctions.
+    #[serde(rename = "o", default)]
+    pub opening: Vec<AuctionPrice>,
+    /// Closing auctions.
+    #[serde(rename = "c", default)]
+    pub closing: Vec<AuctionPrice>,
+}
+
 /// A news article.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct NewsArticle {
@@ -205,6 +239,15 @@ pub struct QuotesResponse {
     pub next_page_token: Option<String>,
 }
 
+/// Paginated per-symbol auctions response.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct AuctionsResponse {
+    /// Daily auctions keyed by symbol.
+    pub auctions: HashMap<String, Vec<Auction>>,
+    /// Token for the next page, if any.
+    pub next_page_token: Option<String>,
+}
+
 /// Per-symbol latest bars response.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct LatestBarsResponse {
@@ -244,6 +287,104 @@ pub struct OrderbooksResponse {
     pub orderbooks: HashMap<String, Orderbook>,
     /// Token for the next page, if any.
     pub next_page_token: Option<String>,
+}
+
+/// Deserializes a possibly-`null` JSON array as an empty vector: the
+/// single-symbol endpoints send `null` rather than `[]` when the symbol has
+/// no data in the requested interval.
+fn null_as_empty_vec<'de, D, T>(deserializer: D) -> std::result::Result<Vec<T>, D::Error>
+where
+    D: Deserializer<'de>,
+    T: Deserialize<'de>,
+{
+    Ok(Option::<Vec<T>>::deserialize(deserializer)?.unwrap_or_default())
+}
+
+/// Paginated bars response of the single-symbol endpoint, where the data is
+/// a flat list and the symbol is echoed at the top level.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SymbolBarsResponse {
+    /// The symbol the bars belong to.
+    pub symbol: String,
+    /// The bars in this page.
+    #[serde(default, deserialize_with = "null_as_empty_vec")]
+    pub bars: Vec<Bar>,
+    /// Token for the next page, if any.
+    pub next_page_token: Option<String>,
+}
+
+/// Paginated trades response of the single-symbol endpoint.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SymbolTradesResponse {
+    /// The symbol the trades belong to.
+    pub symbol: String,
+    /// The trades in this page.
+    #[serde(default, deserialize_with = "null_as_empty_vec")]
+    pub trades: Vec<Trade>,
+    /// Token for the next page, if any.
+    pub next_page_token: Option<String>,
+}
+
+/// Paginated quotes response of the single-symbol endpoint.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SymbolQuotesResponse {
+    /// The symbol the quotes belong to.
+    pub symbol: String,
+    /// The quotes in this page.
+    #[serde(default, deserialize_with = "null_as_empty_vec")]
+    pub quotes: Vec<Quote>,
+    /// Token for the next page, if any.
+    pub next_page_token: Option<String>,
+}
+
+/// Paginated auctions response of the single-symbol endpoint.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SymbolAuctionsResponse {
+    /// The symbol the auctions belong to.
+    pub symbol: String,
+    /// The daily auctions in this page.
+    #[serde(default, deserialize_with = "null_as_empty_vec")]
+    pub auctions: Vec<Auction>,
+    /// Token for the next page, if any.
+    pub next_page_token: Option<String>,
+}
+
+/// Latest bar response of the single-symbol endpoint.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SymbolBarResponse {
+    /// The symbol the bar belongs to.
+    pub symbol: String,
+    /// The latest bar.
+    pub bar: Bar,
+}
+
+/// Latest trade response of the single-symbol endpoint.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SymbolTradeResponse {
+    /// The symbol the trade belongs to.
+    pub symbol: String,
+    /// The latest trade.
+    pub trade: Trade,
+}
+
+/// Latest quote response of the single-symbol endpoint.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SymbolQuoteResponse {
+    /// The symbol the quote belongs to.
+    pub symbol: String,
+    /// The latest quote.
+    pub quote: Quote,
+}
+
+/// Snapshot response of the single-symbol endpoint: the snapshot fields sit
+/// at the top level next to the symbol.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SymbolSnapshot {
+    /// The symbol the snapshot belongs to.
+    pub symbol: String,
+    /// The snapshot itself.
+    #[serde(flatten)]
+    pub snapshot: Snapshot,
 }
 
 /// Paginated news response.
@@ -693,6 +834,54 @@ pub struct CorporateActionsResponse {
     pub next_page_token: Option<String>,
 }
 
+/// A forex rate for a currency pair, either at the end of a timeframe
+/// (historical) or as of now (latest).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ForexRate {
+    /// Rate timestamp (RFC3339).
+    #[serde(rename = "t")]
+    pub timestamp: DateTime<Utc>,
+    /// Bid price.
+    #[serde(rename = "bp")]
+    pub bid_price: f64,
+    /// Ask price.
+    #[serde(rename = "ap")]
+    pub ask_price: f64,
+    /// Mid price.
+    #[serde(rename = "mp")]
+    pub mid_price: f64,
+}
+
+/// Paginated per-currency-pair historical forex rates response.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ForexRatesResponse {
+    /// Rates keyed by currency pair (e.g. `USDJPY`).
+    pub rates: HashMap<String, Vec<ForexRate>>,
+    /// Token for the next page, if any.
+    pub next_page_token: Option<String>,
+}
+
+/// Latest forex rate per currency pair.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct LatestForexRatesResponse {
+    /// Latest rate keyed by currency pair (e.g. `USDJPY`).
+    pub rates: HashMap<String, ForexRate>,
+}
+
+/// A company or crypto logo image.
+///
+/// The logos endpoint answers with the raw image (PNG, 300x300) rather than
+/// JSON, so the payload is kept as bytes alongside the `Content-Type` the
+/// server reported.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Logo {
+    /// Raw image bytes.
+    pub bytes: Vec<u8>,
+    /// The response's `Content-Type` header (e.g. `image/png`), if it sent
+    /// one.
+    pub content_type: Option<String>,
+}
+
 /// Extends per-symbol vectors with the next page's entries.
 fn merge_maps<T>(map: &mut HashMap<String, Vec<T>>, next: HashMap<String, Vec<T>>) {
     for (symbol, items) in next {
@@ -729,6 +918,61 @@ impl PaginatedResponse for QuotesResponse {
 
     fn merge(&mut self, next: Self) {
         merge_maps(&mut self.quotes, next.quotes);
+        self.next_page_token = next.next_page_token;
+    }
+}
+
+impl PaginatedResponse for AuctionsResponse {
+    fn next_page_token(&self) -> Option<&str> {
+        self.next_page_token.as_deref()
+    }
+
+    fn merge(&mut self, next: Self) {
+        merge_maps(&mut self.auctions, next.auctions);
+        self.next_page_token = next.next_page_token;
+    }
+}
+
+impl PaginatedResponse for SymbolBarsResponse {
+    fn next_page_token(&self) -> Option<&str> {
+        self.next_page_token.as_deref()
+    }
+
+    fn merge(&mut self, next: Self) {
+        self.bars.extend(next.bars);
+        self.next_page_token = next.next_page_token;
+    }
+}
+
+impl PaginatedResponse for SymbolTradesResponse {
+    fn next_page_token(&self) -> Option<&str> {
+        self.next_page_token.as_deref()
+    }
+
+    fn merge(&mut self, next: Self) {
+        self.trades.extend(next.trades);
+        self.next_page_token = next.next_page_token;
+    }
+}
+
+impl PaginatedResponse for SymbolQuotesResponse {
+    fn next_page_token(&self) -> Option<&str> {
+        self.next_page_token.as_deref()
+    }
+
+    fn merge(&mut self, next: Self) {
+        self.quotes.extend(next.quotes);
+        self.next_page_token = next.next_page_token;
+    }
+}
+
+impl PaginatedResponse for SymbolAuctionsResponse {
+    fn next_page_token(&self) -> Option<&str> {
+        self.next_page_token.as_deref()
+    }
+
+    fn merge(&mut self, next: Self) {
+        self.auctions.extend(next.auctions);
         self.next_page_token = next.next_page_token;
     }
 }
@@ -797,12 +1041,33 @@ impl PaginatedResponse for CorporateActionsResponse {
     }
 }
 
+impl PaginatedResponse for ForexRatesResponse {
+    fn next_page_token(&self) -> Option<&str> {
+        self.next_page_token.as_deref()
+    }
+
+    fn merge(&mut self, next: Self) {
+        merge_maps(&mut self.rates, next.rates);
+        self.next_page_token = next.next_page_token;
+    }
+}
+
 /// Option exchange code → name mapping.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct OptionExchangesResponse {
     /// Exchange code to exchange name.
     pub exchanges: HashMap<String, String>,
 }
+
+/// Condition code → description table, as returned by the
+/// `meta/conditions/{ticktype}` endpoints. The response body is the table
+/// itself, not a wrapper object.
+pub type ConditionsResponse = HashMap<String, String>;
+
+/// Exchange code → exchange name table, as returned by
+/// `GET /v2/stocks/meta/exchanges`. The response body is the table itself,
+/// not a wrapper object.
+pub type ExchangesResponse = HashMap<String, String>;
 
 #[cfg(test)]
 mod tests {
@@ -825,6 +1090,63 @@ mod tests {
         assert_eq!(bars[0].trade_count, Some(16));
         assert_eq!(bars[0].vwap, Some(133.7));
         assert_eq!(resp.next_page_token, None);
+    }
+
+    #[test]
+    fn deserialize_forex_rates_response() {
+        let json = r#"{
+            "rates": {
+                "USDJPY": [
+                    {"t": "2024-07-24T00:00:00Z", "bp": 153.7, "ap": 153.9, "mp": 153.8}
+                ]
+            },
+            "next_page_token": "next"
+        }"#;
+        let resp: ForexRatesResponse = serde_json::from_str(json).unwrap();
+        let rates = &resp.rates["USDJPY"];
+        assert_eq!(rates.len(), 1);
+        assert_eq!(rates[0].bid_price, 153.7);
+        assert_eq!(rates[0].ask_price, 153.9);
+        assert_eq!(rates[0].mid_price, 153.8);
+        assert_eq!(resp.next_page_token.as_deref(), Some("next"));
+    }
+
+    #[test]
+    fn deserialize_latest_forex_rates_response() {
+        let json = r#"{
+            "rates": {
+                "USDMXN": {"t": "2024-07-24T12:00:00Z", "bp": 18.1, "ap": 18.3, "mp": 18.2}
+            }
+        }"#;
+        let resp: LatestForexRatesResponse = serde_json::from_str(json).unwrap();
+        assert_eq!(resp.rates["USDMXN"].mid_price, 18.2);
+    }
+
+    fn forex_rate(mid: f64) -> ForexRate {
+        serde_json::from_value(serde_json::json!({
+            "t": "2024-07-24T00:00:00Z", "bp": mid, "ap": mid, "mp": mid
+        }))
+        .unwrap()
+    }
+
+    #[test]
+    fn forex_rates_response_merge_extends_per_pair_vecs() {
+        let mut first = ForexRatesResponse {
+            rates: HashMap::from([("USDJPY".to_string(), vec![forex_rate(1.0)])]),
+            next_page_token: Some("t1".to_string()),
+        };
+        let second = ForexRatesResponse {
+            rates: HashMap::from([
+                ("USDJPY".to_string(), vec![forex_rate(2.0)]),
+                ("USDMXN".to_string(), vec![forex_rate(3.0)]),
+            ]),
+            next_page_token: None,
+        };
+        first.merge(second);
+        let mids: Vec<f64> = first.rates["USDJPY"].iter().map(|r| r.mid_price).collect();
+        assert_eq!(mids, vec![1.0, 2.0]);
+        assert_eq!(first.rates["USDMXN"].len(), 1);
+        assert_eq!(first.next_page_token, None);
     }
 
     #[test]
@@ -1129,5 +1451,197 @@ mod tests {
         assert_eq!(first.corporate_actions.redemptions.len(), 1);
         assert_eq!(first.corporate_actions.reverse_splits.len(), 1);
         assert_eq!(first.next_page_token, None);
+    }
+
+    #[test]
+    fn deserialize_auctions_response() {
+        let json = r#"{
+            "auctions": {
+                "AAPL": [
+                    {
+                        "d": "2024-07-24",
+                        "o": [
+                            {"t": "2024-07-24T13:30:00.048Z", "x": "P", "p": 224.0,
+                             "s": 1000, "c": "Q"}
+                        ],
+                        "c": [
+                            {"t": "2024-07-24T20:00:00.106Z", "x": "P", "p": 224.62,
+                             "s": 2000, "c": "M"},
+                            {"t": "2024-07-24T20:00:00.106Z", "x": "V", "p": 224.62,
+                             "c": "6"}
+                        ]
+                    }
+                ]
+            },
+            "next_page_token": "token-1"
+        }"#;
+        let resp: AuctionsResponse = serde_json::from_str(json).unwrap();
+        let days = &resp.auctions["AAPL"];
+        assert_eq!(days.len(), 1);
+        assert_eq!(days[0].date, NaiveDate::from_ymd_opt(2024, 7, 24).unwrap());
+        assert_eq!(days[0].opening.len(), 1);
+        assert_eq!(days[0].opening[0].price, 224.0);
+        assert_eq!(days[0].opening[0].size, Some(1000.0));
+        assert_eq!(days[0].opening[0].condition.as_deref(), Some("Q"));
+        assert_eq!(days[0].closing.len(), 2);
+        // Size is optional: not every venue reports it.
+        assert_eq!(days[0].closing[1].size, None);
+        assert_eq!(resp.next_page_token.as_deref(), Some("token-1"));
+
+        // Round-trip.
+        let serialized = serde_json::to_string(&resp).unwrap();
+        let again: AuctionsResponse = serde_json::from_str(&serialized).unwrap();
+        assert_eq!(resp, again);
+    }
+
+    fn auction(date: &str, close: f64) -> Auction {
+        serde_json::from_value(serde_json::json!({
+            "d": date,
+            "c": [{"t": "2024-07-24T20:00:00.106Z", "x": "P", "p": close, "c": "M"}]
+        }))
+        .unwrap()
+    }
+
+    #[test]
+    fn auctions_response_merge_extends_per_symbol_vecs() {
+        let mut first = AuctionsResponse {
+            auctions: HashMap::from([("AAPL".to_string(), vec![auction("2024-07-23", 223.9)])]),
+            next_page_token: Some("t1".to_string()),
+        };
+        let second = AuctionsResponse {
+            auctions: HashMap::from([
+                ("AAPL".to_string(), vec![auction("2024-07-24", 224.62)]),
+                ("MSFT".to_string(), vec![auction("2024-07-24", 425.0)]),
+            ]),
+            next_page_token: None,
+        };
+        first.merge(second);
+        assert_eq!(first.auctions["AAPL"].len(), 2);
+        assert_eq!(first.auctions["MSFT"].len(), 1);
+        // Missing `o` deserializes as an empty list.
+        assert!(first.auctions["AAPL"][0].opening.is_empty());
+        assert_eq!(first.next_page_token, None);
+    }
+
+    #[test]
+    fn deserialize_symbol_bars_response() {
+        let json = r#"{
+            "symbol": "AAPL",
+            "bars": [
+                {"t": "2024-07-24T13:30:00Z", "o": 224.0, "h": 225.0, "l": 223.5,
+                 "c": 224.62, "v": 1000, "n": 42, "vw": 224.3}
+            ],
+            "next_page_token": null
+        }"#;
+        let resp: SymbolBarsResponse = serde_json::from_str(json).unwrap();
+        assert_eq!(resp.symbol, "AAPL");
+        assert_eq!(resp.bars.len(), 1);
+        assert_eq!(resp.bars[0].close, 224.62);
+
+        // Round-trip.
+        let serialized = serde_json::to_string(&resp).unwrap();
+        let again: SymbolBarsResponse = serde_json::from_str(&serialized).unwrap();
+        assert_eq!(resp, again);
+    }
+
+    #[test]
+    fn single_symbol_responses_accept_null_lists() {
+        let bars: SymbolBarsResponse =
+            serde_json::from_str(r#"{"symbol": "AAPL", "bars": null, "next_page_token": null}"#)
+                .unwrap();
+        assert!(bars.bars.is_empty());
+
+        let trades: SymbolTradesResponse =
+            serde_json::from_str(r#"{"symbol": "AAPL", "trades": null, "next_page_token": null}"#)
+                .unwrap();
+        assert!(trades.trades.is_empty());
+
+        let quotes: SymbolQuotesResponse =
+            serde_json::from_str(r#"{"symbol": "AAPL", "quotes": null, "next_page_token": null}"#)
+                .unwrap();
+        assert!(quotes.quotes.is_empty());
+
+        let auctions: SymbolAuctionsResponse = serde_json::from_str(
+            r#"{"symbol": "AAPL", "auctions": null, "next_page_token": null}"#,
+        )
+        .unwrap();
+        assert!(auctions.auctions.is_empty());
+    }
+
+    #[test]
+    fn symbol_bars_response_merge_extends_list() {
+        let mut first = SymbolBarsResponse {
+            symbol: "AAPL".to_string(),
+            bars: vec![bar(1.0)],
+            next_page_token: Some("t1".to_string()),
+        };
+        let second = SymbolBarsResponse {
+            symbol: "AAPL".to_string(),
+            bars: vec![bar(2.0), bar(3.0)],
+            next_page_token: None,
+        };
+        first.merge(second);
+        let closes: Vec<f64> = first.bars.iter().map(|b| b.close).collect();
+        assert_eq!(closes, vec![1.0, 2.0, 3.0]);
+        assert_eq!(first.next_page_token, None);
+    }
+
+    #[test]
+    fn deserialize_symbol_latest_and_snapshot_responses() {
+        let trade: SymbolTradeResponse = serde_json::from_str(
+            r#"{"symbol": "AAPL",
+                "trade": {"t": "2024-07-24T19:59:59.639Z", "p": 224.62, "s": 4,
+                          "x": "Q", "i": 52983525029461, "c": ["@"], "z": "C"}}"#,
+        )
+        .unwrap();
+        assert_eq!(trade.symbol, "AAPL");
+        assert_eq!(trade.trade.price, 224.62);
+
+        let quote: SymbolQuoteResponse = serde_json::from_str(
+            r#"{"symbol": "AAPL",
+                "quote": {"t": "2024-07-24T19:59:59.639Z", "bp": 224.6, "bs": 3,
+                          "ap": 224.65, "as": 5, "bx": "P", "ax": "Q", "z": "C"}}"#,
+        )
+        .unwrap();
+        assert_eq!(quote.quote.ask_price, 224.65);
+
+        let bar: SymbolBarResponse = serde_json::from_str(
+            r#"{"symbol": "AAPL",
+                "bar": {"t": "2024-07-24T19:59:00Z", "o": 224.0, "h": 225.0,
+                        "l": 223.5, "c": 224.62, "v": 1000}}"#,
+        )
+        .unwrap();
+        assert_eq!(bar.bar.close, 224.62);
+
+        // The snapshot fields sit next to `symbol` at the top level.
+        let snapshot: SymbolSnapshot = serde_json::from_str(
+            r#"{"symbol": "AAPL", "currency": "USD",
+                "dailyBar": {"t": "2024-07-24T04:00:00Z", "o": 224.0, "h": 225.0,
+                             "l": 223.5, "c": 224.62, "v": 1000}}"#,
+        )
+        .unwrap();
+        assert_eq!(snapshot.symbol, "AAPL");
+        assert_eq!(
+            snapshot.snapshot.daily_bar.as_ref().map(|b| b.close),
+            Some(224.62)
+        );
+        assert!(snapshot.snapshot.latest_trade.is_none());
+
+        // Round-trip.
+        let serialized = serde_json::to_string(&snapshot).unwrap();
+        let again: SymbolSnapshot = serde_json::from_str(&serialized).unwrap();
+        assert_eq!(snapshot, again);
+    }
+
+    #[test]
+    fn deserialize_meta_tables() {
+        let conditions: ConditionsResponse =
+            serde_json::from_str(r#"{"@": "Regular Sale", "A": "Acquisition"}"#).unwrap();
+        assert_eq!(conditions["@"], "Regular Sale");
+        assert_eq!(conditions.len(), 2);
+
+        let exchanges: ExchangesResponse =
+            serde_json::from_str(r#"{"N": "New York Stock Exchange", "V": "IEX"}"#).unwrap();
+        assert_eq!(exchanges["V"], "IEX");
     }
 }
