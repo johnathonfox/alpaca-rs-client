@@ -536,7 +536,11 @@ pub struct TradeActivity {
     /// string followed by a UUID).
     pub id: String,
     /// Id of the account the activity relates to.
-    pub account_id: String,
+    ///
+    /// The live `/v2/account/activities` endpoint omits this field entirely —
+    /// the account is implied by the credentials — so it is optional.
+    #[serde(default)]
+    pub account_id: Option<String>,
     /// The kind of activity (e.g. `FILL`).
     pub activity_type: ActivityType,
     /// When the trade was processed.
@@ -571,7 +575,11 @@ pub struct NonTradeActivity {
     /// string followed by a UUID).
     pub id: String,
     /// Id of the account the activity relates to.
-    pub account_id: String,
+    ///
+    /// The live `/v2/account/activities` endpoint omits this field entirely —
+    /// the account is implied by the credentials — so it is optional.
+    #[serde(default)]
+    pub account_id: Option<String>,
     /// The kind of activity (e.g. `DIV`).
     pub activity_type: ActivityType,
     /// The date the activity occurred or the transaction settled.
@@ -870,6 +878,46 @@ mod tests {
         "price": "150.5",
         "per_share_amount": "0.56"
     }"#;
+
+    /// Both activity families exactly as the live `/v2/account/activities`
+    /// endpoint returns them: no `account_id` on either, and the non-trade
+    /// item carrying `activity_sub_type`/`created_at`/`currency`.
+    ///
+    /// Regression test — the models required `account_id`, so every real
+    /// response failed to deserialize while the mocked tests (whose fixtures
+    /// invented the field) passed.
+    #[test]
+    fn deserialize_live_activities_without_account_id() {
+        const LIVE_JSON: &str = r#"[
+            {"activity_type":"FILL","cum_qty":"1","id":"20220203000000000::045b3b8d-c566-4bef-b741-2bf598dd6ae7",
+             "leaves_qty":"0","order_id":"6f2b9b1a-1111-2222-3333-444455556666","order_status":"filled",
+             "price":"127.81","qty":"1","side":"sell_short","swap_rate":"1","symbol":"AAPL",
+             "transaction_time":"2022-03-07T16:55:29.661Z","type":"fill"},
+            {"activity_sub_type":"CDIV","activity_type":"DIV","created_at":"2026-03-20T15:42:11.118274Z",
+             "currency":"USD","date":"2026-03-20","description":"Cash DIV @ 0.07",
+             "id":"20260320000000000::aaaa1111-bbbb-2222-cccc-333344445555",
+             "net_amount":"0.07","status":"executed"}
+        ]"#;
+
+        let activities: Vec<AccountActivity> = serde_json::from_str(LIVE_JSON).unwrap();
+        assert_eq!(activities.len(), 2);
+
+        let AccountActivity::Trade(trade) = &activities[0] else {
+            panic!("expected a trade activity, got {:?}", activities[0]);
+        };
+        assert_eq!(trade.account_id, None);
+        assert_eq!(trade.symbol, "AAPL");
+        assert_eq!(trade.activity_type, ActivityType::Fill);
+        // Short-sale executions report a side the orders API never accepts.
+        assert_eq!(trade.side, OrderSide::SellShort);
+
+        let AccountActivity::NonTrade(non_trade) = &activities[1] else {
+            panic!("expected a non-trade activity, got {:?}", activities[1]);
+        };
+        assert_eq!(non_trade.account_id, None);
+        assert_eq!(non_trade.activity_type, ActivityType::Div);
+        assert_eq!(non_trade.net_amount, Decimal::new(7, 2));
+    }
 
     #[test]
     fn deserialize_trade_activity() {

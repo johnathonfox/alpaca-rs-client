@@ -2,14 +2,22 @@
 
 use serde::{Deserialize, Serialize};
 
-/// The side of an order.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+/// The side of an order or execution.
+///
+/// `SellShort` does not appear on orders you submit, but the activities and
+/// events endpoints report it on short-sale executions.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum OrderSide {
     /// Buy.
     Buy,
     /// Sell.
     Sell,
+    /// Sell short — reported on executions, not submitted.
+    SellShort,
+    /// A side added by the API after this crate was released.
+    #[serde(untagged)]
+    Other(String),
 }
 
 /// The type of an order.
