@@ -8,9 +8,9 @@ use rust_decimal::Decimal;
 use serde::{Serialize, Serializer};
 
 use super::enums::{
-    ActivityType, AssetClass, AssetExchange, AssetStatus, ContractType, DTBPCheck, ExerciseStyle,
-    OrderClass, OrderSide, OrderType, PDTCheck, PositionIntent, QueryOrderStatus, TimeInForce,
-    TradeConfirmationEmail,
+    ActivityType, AssetAttribute, AssetClass, AssetExchange, AssetStatus, CalendarTimezone,
+    ContractType, DTBPCheck, ExerciseStyle, LocateStatus, Market, OrderClass, OrderSide, OrderType,
+    PDTCheck, PositionIntent, QueryOrderStatus, TimeInForce, TradeConfirmationEmail,
 };
 use crate::data::enums::Sort;
 use crate::error::{Error, Result};
@@ -297,6 +297,25 @@ pub struct PortfolioHistoryRequest {
     pub extended_hours: Option<bool>,
 }
 
+/// Serializes a list of asset attributes as a comma-separated query parameter
+/// value (e.g. `"has_options,ipo"`).
+fn serialize_asset_attributes<S: Serializer>(
+    attributes: &Option<Vec<AssetAttribute>>,
+    serializer: S,
+) -> std::result::Result<S::Ok, S::Error> {
+    match attributes {
+        Some(attributes) => {
+            let joined = attributes
+                .iter()
+                .map(AssetAttribute::as_str)
+                .collect::<Vec<_>>()
+                .join(",");
+            serializer.serialize_str(&joined)
+        }
+        None => serializer.serialize_none(),
+    }
+}
+
 /// Query parameters for listing assets.
 #[derive(Debug, Clone, Default, Serialize)]
 pub struct GetAssetsRequest {
@@ -309,6 +328,14 @@ pub struct GetAssetsRequest {
     /// Exchange filter.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub exchange: Option<AssetExchange>,
+    /// Attribute filter (serialized comma-separated). Alpaca matches these
+    /// disjunctively: an asset carrying *any* of the listed attributes is
+    /// returned, not only those carrying all of them.
+    #[serde(
+        skip_serializing_if = "Option::is_none",
+        serialize_with = "serialize_asset_attributes"
+    )]
+    pub attributes: Option<Vec<AssetAttribute>>,
 }
 
 /// Query parameters for the market calendar.
@@ -320,6 +347,65 @@ pub struct CalendarRequest {
     /// Last day of the range.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub end: Option<NaiveDate>,
+}
+
+/// Serializes a list of markets as a comma-separated query parameter value
+/// (e.g. `"NYSE,OPRA"`).
+fn serialize_markets<S: Serializer>(
+    markets: &[Market],
+    serializer: S,
+) -> std::result::Result<S::Ok, S::Error> {
+    let joined = markets
+        .iter()
+        .map(Market::as_str)
+        .collect::<Vec<_>>()
+        .join(",");
+    serializer.serialize_str(&joined)
+}
+
+/// Query parameters for the multi-market clock (`GET /v3/clock`), built by
+/// [`TradingClient::get_clock_v3`](super::TradingClient::get_clock_v3).
+#[derive(Debug, Clone, Serialize)]
+pub(crate) struct ClockV3Query {
+    /// Markets to report on (serialized comma-separated). An empty list is
+    /// omitted, leaving the market selection to the API.
+    #[serde(
+        skip_serializing_if = "Vec::is_empty",
+        serialize_with = "serialize_markets"
+    )]
+    pub(crate) markets: Vec<Market>,
+    /// Evaluate the clock at this time instead of the current one.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) time: Option<DateTime<Utc>>,
+}
+
+impl ClockV3Query {
+    /// Builds a clock query for the given markets and optional time override.
+    pub(crate) fn new(markets: &[Market], time: Option<DateTime<Utc>>) -> Self {
+        Self {
+            markets: markets.to_vec(),
+            time,
+        }
+    }
+}
+
+/// Query parameters for the multi-market calendar
+/// (`GET /v3/calendar/{market}`).
+///
+/// Separate from [`CalendarRequest`], which serves the legacy `/v2/calendar`
+/// endpoint: v3 takes a `timezone` rather than a `date_type`, and defaults to
+/// a one-week range starting today rather than the full calendar.
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct CalendarV3Request {
+    /// First day of the range (inclusive; default: today).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub start: Option<NaiveDate>,
+    /// Last day of the range (inclusive; default: one week after `start`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub end: Option<NaiveDate>,
+    /// Timezone of the returned session times (default: the market's own).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub timezone: Option<CalendarTimezone>,
 }
 
 /// Body for creating a watchlist.
@@ -489,6 +575,121 @@ pub struct AccountActivitiesRequest {
     pub page_token: Option<String>,
 }
 
+/// Locate quantities must be requested in round lots of this many shares.
+const LOCATE_ROUND_LOT: i64 = 100;
+
+/// Maximum number of unique symbols accepted by the locate-quotes endpoint.
+const LOCATE_QUOTES_MAX_SYMBOLS: usize = 100;
+
+/// Query parameters for locate quotes (`GET /v1/locates/quotes`), built by
+/// [`TradingClient::get_locate_quotes`](super::TradingClient::get_locate_quotes).
+#[derive(Debug, Clone, Serialize)]
+pub(crate) struct LocateQuotesQuery {
+    /// The symbols to quote, comma-separated.
+    pub(crate) symbols: String,
+}
+
+impl LocateQuotesQuery {
+    /// Builds a locate-quotes query, rejecting empty symbol lists and lists of
+    /// more than [`LOCATE_QUOTES_MAX_SYMBOLS`] unique symbols (both of which
+    /// the API answers with HTTP 400).
+    pub(crate) fn new(symbols: &[String]) -> Result<Self> {
+        if symbols.is_empty() {
+            return Err(Error::InvalidRequest(
+                "locate quotes require at least one symbol".into(),
+            ));
+        }
+        // Deduplicate in first-seen order. The cap counts unique symbols, so
+        // joining the caller's raw slice would let 150 copies of one symbol
+        // through as a 150-entry query the API rejects.
+        let mut seen = std::collections::BTreeSet::new();
+        let unique: Vec<&str> = symbols
+            .iter()
+            .map(String::as_str)
+            .filter(|symbol| seen.insert(*symbol))
+            .collect();
+        if unique.len() > LOCATE_QUOTES_MAX_SYMBOLS {
+            return Err(Error::InvalidRequest(format!(
+                "locate quotes accept at most {LOCATE_QUOTES_MAX_SYMBOLS} unique symbols, got {}",
+                unique.len()
+            )));
+        }
+        Ok(Self {
+            symbols: unique.join(","),
+        })
+    }
+}
+
+/// Body for creating a short-sale locate (`POST /v1/locates`).
+#[derive(Debug, Clone, Serialize)]
+pub struct CreateLocateRequest {
+    /// Symbol to locate shares of.
+    pub symbol: String,
+    /// Number of shares to locate; must be a positive round lot of 100.
+    pub qty: i64,
+    /// Maximum acceptable locate fee per share in USD. Without it, any quoted
+    /// fee is accepted.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub limit_price: Option<Decimal>,
+    /// Reject the locate unless the full quantity is available (default:
+    /// `false`, which allows a partial locate).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub all_or_none: Option<bool>,
+}
+
+impl CreateLocateRequest {
+    /// Creates a locate request for `qty` shares of `symbol`, accepting any
+    /// quoted fee and a partial fill.
+    pub fn new(symbol: impl Into<String>, qty: i64) -> Self {
+        Self {
+            symbol: symbol.into(),
+            qty,
+            limit_price: None,
+            all_or_none: None,
+        }
+    }
+
+    /// Validates structural rules enforced by the locates API.
+    pub(crate) fn validate(&self) -> Result<()> {
+        if self.symbol.is_empty() {
+            return Err(Error::InvalidRequest("locate requires a symbol".into()));
+        }
+        if self.qty <= 0 || self.qty % LOCATE_ROUND_LOT != 0 {
+            return Err(Error::InvalidRequest(format!(
+                "locate qty must be a positive round lot of {LOCATE_ROUND_LOT}, got {}",
+                self.qty
+            )));
+        }
+        Ok(())
+    }
+}
+
+/// Query parameters for listing locates (`GET /v1/locates`). All fields are
+/// optional; pagination is manual via `limit` and `page_token`.
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct GetLocatesRequest {
+    /// Only locates in this status.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub status: Option<LocateStatus>,
+    /// Only locates for this symbol.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub symbol: Option<String>,
+    /// Only locates whose trading date is on or after this date. The locate
+    /// trading date is in `America/New_York` and rolls over at 8pm ET.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub start: Option<NaiveDate>,
+    /// Only locates whose trading date is before this date (exclusive), on the
+    /// same clock as `start`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub end: Option<NaiveDate>,
+    /// Maximum number of locates per page (1–10000; default 1000).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub limit: Option<u32>,
+    /// Pagination token from a previous response.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub page_token: Option<String>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -608,6 +809,69 @@ mod tests {
     }
 
     #[test]
+    fn serialize_get_assets_request_attributes() {
+        let req = GetAssetsRequest {
+            status: Some(AssetStatus::Active),
+            attributes: Some(vec![
+                AssetAttribute::HasOptions,
+                AssetAttribute::Other("warp_drive_enabled".into()),
+            ]),
+            ..Default::default()
+        };
+        let json = serde_json::to_value(&req).unwrap();
+        assert_eq!(json["status"], "active");
+        assert_eq!(json["attributes"], "has_options,warp_drive_enabled");
+        assert!(json.get("exchange").is_none());
+
+        // An empty request serializes to an empty object.
+        let empty = serde_json::to_value(GetAssetsRequest::default()).unwrap();
+        assert_eq!(empty, serde_json::json!({}));
+    }
+
+    #[test]
+    fn serialize_clock_v3_query() {
+        let query = ClockV3Query::new(&[Market::NYSE, Market::OPRA, Market::BOATS], None);
+        let json = serde_json::to_value(&query).unwrap();
+        assert_eq!(json["markets"], "NYSE,OPRA,BOATS");
+        assert!(json.get("time").is_none());
+
+        // A market added after this crate was released still serializes to
+        // its wire value.
+        let query = ClockV3Query::new(&[Market::Other("XPHL".into())], None);
+        assert_eq!(serde_json::to_value(&query).unwrap()["markets"], "XPHL");
+
+        // The time override is sent as an RFC 3339 timestamp.
+        let time = DateTime::parse_from_rfc3339("2025-06-24T18:15:22Z")
+            .unwrap()
+            .with_timezone(&Utc);
+        let query = ClockV3Query::new(&[Market::XNYS], Some(time));
+        let json = serde_json::to_value(&query).unwrap();
+        assert_eq!(json["markets"], "XNYS");
+        assert_eq!(json["time"], "2025-06-24T18:15:22Z");
+
+        // No markets means no parameter: the API picks its own default set.
+        let empty = serde_json::to_value(ClockV3Query::new(&[], None)).unwrap();
+        assert_eq!(empty, serde_json::json!({}));
+    }
+
+    #[test]
+    fn serialize_calendar_v3_request() {
+        let req = CalendarV3Request {
+            start: Some(NaiveDate::from_ymd_opt(2025, 1, 2).unwrap()),
+            end: Some(NaiveDate::from_ymd_opt(2025, 1, 9).unwrap()),
+            timezone: Some(CalendarTimezone::Utc),
+        };
+        let json = serde_json::to_value(&req).unwrap();
+        assert_eq!(json["start"], "2025-01-02");
+        assert_eq!(json["end"], "2025-01-09");
+        assert_eq!(json["timezone"], "UTC");
+
+        // An empty request serializes to an empty object.
+        let empty = serde_json::to_value(CalendarV3Request::default()).unwrap();
+        assert_eq!(empty, serde_json::json!({}));
+    }
+
+    #[test]
     fn serialize_account_activities_request() {
         let req = AccountActivitiesRequest {
             activity_types: Some(vec![ActivityType::Fill, ActivityType::Div]),
@@ -628,6 +892,116 @@ mod tests {
 
         // An empty request serializes to an empty object.
         let empty = serde_json::to_value(AccountActivitiesRequest::default()).unwrap();
+        assert_eq!(empty, serde_json::json!({}));
+    }
+
+    #[test]
+    fn serialize_create_locate_request() {
+        let req = CreateLocateRequest::new("TSLA", 100);
+        let json = serde_json::to_value(&req).unwrap();
+        assert_eq!(json["symbol"], "TSLA");
+        assert_eq!(json["qty"], 100);
+        assert!(json.get("limit_price").is_none());
+        assert!(json.get("all_or_none").is_none());
+        assert!(req.validate().is_ok());
+
+        let req = CreateLocateRequest {
+            limit_price: Some(Decimal::new(5, 2)),
+            all_or_none: Some(true),
+            ..CreateLocateRequest::new("TSLA", 300)
+        };
+        let json = serde_json::to_value(&req).unwrap();
+        // The fee is a trading-API number, so it goes out as a JSON string;
+        // the share count is a plain integer.
+        assert_eq!(json["limit_price"], "0.05");
+        assert_eq!(json["qty"], 300);
+        assert_eq!(json["all_or_none"], true);
+    }
+
+    #[test]
+    fn create_locate_validation_requires_positive_round_lots() {
+        for qty in [1, 99, 101, 150, 0, -100] {
+            let err = CreateLocateRequest::new("TSLA", qty)
+                .validate()
+                .expect_err("qty must be a positive round lot of 100");
+            assert!(
+                matches!(err, Error::InvalidRequest(_)),
+                "qty {qty}: {err:?}"
+            );
+        }
+        for qty in [100, 200, 1_000] {
+            assert!(CreateLocateRequest::new("TSLA", qty).validate().is_ok());
+        }
+        assert!(matches!(
+            CreateLocateRequest::new("", 100).validate(),
+            Err(Error::InvalidRequest(_))
+        ));
+    }
+
+    #[test]
+    fn locate_quotes_query_joins_and_limits_symbols() {
+        let query = LocateQuotesQuery::new(&["TSLA".to_string(), "GME".to_string()]).unwrap();
+        assert_eq!(serde_json::to_value(&query).unwrap()["symbols"], "TSLA,GME");
+
+        // Duplicates collapse in first-seen order rather than being forwarded:
+        // the cap counts unique symbols, so the query must too.
+        let dupes =
+            LocateQuotesQuery::new(&["TSLA".to_string(), "GME".to_string(), "TSLA".to_string()])
+                .unwrap();
+        assert_eq!(serde_json::to_value(&dupes).unwrap()["symbols"], "TSLA,GME");
+
+        // 150 copies of one symbol is 1 unique symbol, so it is accepted — and
+        // must not go out as a 150-entry list.
+        let many = vec!["TSLA".to_string(); 150];
+        let query = LocateQuotesQuery::new(&many).unwrap();
+        assert_eq!(serde_json::to_value(&query).unwrap()["symbols"], "TSLA");
+
+        // Empty and oversized symbol lists are rejected client-side.
+        assert!(matches!(
+            LocateQuotesQuery::new(&[]),
+            Err(Error::InvalidRequest(_))
+        ));
+        let too_many: Vec<String> = (0..101).map(|i| format!("SYM{i}")).collect();
+        assert!(matches!(
+            LocateQuotesQuery::new(&too_many),
+            Err(Error::InvalidRequest(_))
+        ));
+        // The cap counts unique symbols, so duplicates stay under it.
+        let duplicates: Vec<String> = std::iter::repeat_n("TSLA".to_string(), 150).collect();
+        assert!(LocateQuotesQuery::new(&duplicates).is_ok());
+        // Exactly the cap is still accepted.
+        let at_cap: Vec<String> = (0..100).map(|i| format!("SYM{i}")).collect();
+        assert!(LocateQuotesQuery::new(&at_cap).is_ok());
+    }
+
+    #[test]
+    fn serialize_get_locates_request() {
+        let req = GetLocatesRequest {
+            status: Some(LocateStatus::Active),
+            symbol: Some("TSLA".into()),
+            start: Some(NaiveDate::from_ymd_opt(2026, 1, 2).unwrap()),
+            end: Some(NaiveDate::from_ymd_opt(2026, 1, 9).unwrap()),
+            limit: Some(50),
+            page_token: Some("tok123".into()),
+        };
+        let json = serde_json::to_value(&req).unwrap();
+        assert_eq!(json["status"], "active");
+        assert_eq!(json["symbol"], "TSLA");
+        assert_eq!(json["start"], "2026-01-02");
+        assert_eq!(json["end"], "2026-01-09");
+        assert_eq!(json["limit"], 50);
+        assert_eq!(json["page_token"], "tok123");
+
+        // A status added after this crate was released still serializes to its
+        // wire value.
+        let req = GetLocatesRequest {
+            status: Some(LocateStatus::Other("pending".into())),
+            ..Default::default()
+        };
+        assert_eq!(serde_json::to_value(&req).unwrap()["status"], "pending");
+
+        // An empty request serializes to an empty object.
+        let empty = serde_json::to_value(GetLocatesRequest::default()).unwrap();
         assert_eq!(empty, serde_json::json!({}));
     }
 }

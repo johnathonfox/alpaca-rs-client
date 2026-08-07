@@ -5,14 +5,15 @@
 //! [`Decimal`] (with the `serde-str` feature, `Decimal` (de)serializes as a
 //! string by default).
 
-use chrono::{DateTime, NaiveDate, Utc};
+use chrono::{DateTime, FixedOffset, NaiveDate, Utc};
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 
 use super::enums::{
-    ActivityType, AssetClass, AssetExchange, AssetStatus, ContractType, DTBPCheck, ExerciseStyle,
-    NonTradeActivityStatus, OrderClass, OrderSide, OrderStatus, OrderType, PDTCheck, PositionSide,
-    TimeInForce, TradeActivityType, TradeConfirmationEmail,
+    ActivityType, AssetAttribute, AssetClass, AssetExchange, AssetStatus, BorrowStatus,
+    ContractType, DTBPCheck, ExerciseStyle, LocateQuoteErrorCode, LocateStatus, Market,
+    MarketPhase, NonTradeActivityStatus, OrderClass, OrderSide, OrderStatus, OrderType, PDTCheck,
+    PositionSide, TimeInForce, TradeActivityType, TradeConfirmationEmail,
 };
 
 /// A trading account.
@@ -233,14 +234,29 @@ pub struct Asset {
     /// Whether the asset is shortable.
     pub shortable: Option<bool>,
     /// Whether the asset is easy to borrow.
+    ///
+    /// Deprecated by the API (sunset 2026-09-22) in favour of
+    /// [`borrow_status`](Self::borrow_status); still returned for now.
     pub easy_to_borrow: Option<bool>,
+    /// How hard the asset is to borrow for short selling.
+    pub borrow_status: Option<BorrowStatus>,
     /// Whether the asset is fractionable.
     pub fractionable: Option<bool>,
     /// Maintenance margin requirement as a percentage.
+    ///
+    /// Deprecated by the API in favour of
+    /// [`margin_requirement_long`](Self::margin_requirement_long) and
+    /// [`margin_requirement_short`](Self::margin_requirement_short); still
+    /// returned for now. Note this one arrives as a JSON number, unlike the
+    /// replacements.
     pub maintenance_margin_requirement: Option<f64>,
-    /// Asset attributes (e.g. `ptp_with_exception`).
+    /// Margin requirement for a long position, as a percentage.
+    pub margin_requirement_long: Option<Decimal>,
+    /// Margin requirement for a short position, as a percentage.
+    pub margin_requirement_short: Option<Decimal>,
+    /// Asset attributes (e.g. [`AssetAttribute::PtpWithException`]).
     #[serde(default)]
-    pub attributes: Vec<String>,
+    pub attributes: Vec<AssetAttribute>,
     /// Minimum order size (fractionable assets).
     pub min_order_size: Option<Decimal>,
     /// Minimum trade increment.
@@ -273,6 +289,92 @@ pub struct CalendarDay {
     pub close: String,
     /// Settlement date, if present.
     pub settlement_date: Option<NaiveDate>,
+}
+
+/// A market described by the v3 clock and calendar endpoints.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MarketInfo {
+    /// Acronym of the market (e.g. [`Market::NYSE`]).
+    pub acronym: Market,
+    /// Full name of the market (e.g. `"New York Stock Exchange"`).
+    pub name: String,
+    /// IANA timezone of the market (e.g. `"America/New_York"`).
+    pub timezone: String,
+    /// ISO 10383 market identifier code (e.g. `"XNYS"`), when the market has
+    /// one.
+    pub mic: Option<String>,
+    /// BIC/SWIFT business identifier code, when the market has one (banking
+    /// calendars).
+    pub bic: Option<String>,
+}
+
+/// The clock of a single market, as returned by `GET /v3/clock`.
+///
+/// Timestamps keep the offset the API sent them with — session times are in
+/// the market's own timezone — so call `.with_timezone(&Utc)` before comparing
+/// across markets.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ClockV3 {
+    /// The market this clock belongs to.
+    pub market: MarketInfo,
+    /// The time on the clock.
+    pub timestamp: DateTime<FixedOffset>,
+    /// Whether the clock is on a market day.
+    pub is_market_day: bool,
+    /// Next market open.
+    pub next_market_open: DateTime<FixedOffset>,
+    /// Next market close.
+    pub next_market_close: DateTime<FixedOffset>,
+    /// The session the market is currently in.
+    pub phase: MarketPhase,
+    /// The end of the current phase.
+    pub phase_until: DateTime<FixedOffset>,
+}
+
+/// Response of `GET /v3/clock`: one [`ClockV3`] per requested market.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ClockV3Response {
+    /// The per-market clocks.
+    pub clocks: Vec<ClockV3>,
+}
+
+/// A single day in the v3 market calendar.
+///
+/// Only `date` and the core session are always present; a market without a
+/// pre-market, after-hours or lunch break omits those fields. As with
+/// [`ClockV3`], times carry the market's own UTC offset unless the request
+/// asked for [`CalendarTimezone::Utc`](super::enums::CalendarTimezone::Utc).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CalendarDayV3 {
+    /// The date of the calendar day.
+    pub date: NaiveDate,
+    /// Start of the core (regular) session.
+    pub core_start: DateTime<FixedOffset>,
+    /// End of the core (regular) session.
+    pub core_end: DateTime<FixedOffset>,
+    /// Start of the pre-market session.
+    pub pre_start: Option<DateTime<FixedOffset>>,
+    /// End of the pre-market session.
+    pub pre_end: Option<DateTime<FixedOffset>>,
+    /// Start of the after-hours session.
+    pub post_start: Option<DateTime<FixedOffset>>,
+    /// End of the after-hours session.
+    pub post_end: Option<DateTime<FixedOffset>>,
+    /// Start of the lunch break.
+    pub lunch_start: Option<DateTime<FixedOffset>>,
+    /// End of the lunch break.
+    pub lunch_end: Option<DateTime<FixedOffset>>,
+    /// Settlement date of trades made on this day.
+    pub settlement_date: Option<NaiveDate>,
+}
+
+/// Response of `GET /v3/calendar/{market}`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CalendarV3Response {
+    /// The market the calendar belongs to.
+    pub market: MarketInfo,
+    /// The calendar days in the requested range.
+    pub calendar: Vec<CalendarDayV3>,
 }
 
 /// Portfolio equity history over a period.
@@ -506,6 +608,88 @@ pub enum AccountActivity {
     NonTrade(NonTradeActivity),
 }
 
+/// Locate availability and pricing for a single symbol.
+///
+/// Quotes are advisory: they neither reserve inventory nor guarantee the fee
+/// of a later [`Locate`].
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LocateQuote {
+    /// Stock symbol.
+    pub symbol: String,
+    /// Number of shares available to locate.
+    pub available_qty: i64,
+    /// Locate fee per share in USD; absent when no quantity is available.
+    pub price: Option<Decimal>,
+    /// When the quote was issued.
+    pub quoted_at: DateTime<Utc>,
+}
+
+/// A symbol from a locate-quotes request that could not be quoted.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LocateQuoteError {
+    /// The requested symbol that could not be quoted.
+    pub symbol: String,
+    /// Machine-readable reason the symbol could not be quoted.
+    pub code: LocateQuoteErrorCode,
+    /// Human-readable error message.
+    pub message: String,
+}
+
+/// Response of `GET /v1/locates/quotes`.
+///
+/// Symbols are split between the two lists: every requested symbol appears
+/// either in `quotes` or in `errors`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LocateQuotesResponse {
+    /// Quotes for the symbols that could be quoted.
+    pub quotes: Vec<LocateQuote>,
+    /// Symbols that could not be quoted (empty when all succeeded).
+    #[serde(default)]
+    pub errors: Vec<LocateQuoteError>,
+}
+
+/// A short-sale locate request and its current lifecycle status.
+///
+/// A rejected locate carries only `rejection_reason`; the `located_*`,
+/// `total_fee` and `expires_at` fields are absent.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Locate {
+    /// Locate id.
+    pub id: String,
+    /// Stock symbol.
+    pub symbol: String,
+    /// Number of shares requested.
+    pub requested_qty: i64,
+    /// Whether the request required the full quantity.
+    pub all_or_none: bool,
+    /// Lifecycle status of the locate.
+    pub status: LocateStatus,
+    /// When the locate was created.
+    pub created_at: DateTime<Utc>,
+    /// Number of shares actually located; absent when rejected.
+    pub located_qty: Option<i64>,
+    /// Locate fee per share in USD; absent when rejected.
+    pub located_price: Option<Decimal>,
+    /// Total (non-refundable) locate fee in USD; absent when rejected.
+    pub total_fee: Option<Decimal>,
+    /// Maximum acceptable fee per share carried over from the request.
+    pub limit_price: Option<Decimal>,
+    /// When an active locate expires; absent when rejected.
+    pub expires_at: Option<DateTime<Utc>>,
+    /// Machine-readable rejection reason (e.g. `"inventory_unavailable"`),
+    /// present only when rejected.
+    pub rejection_reason: Option<String>,
+}
+
+/// Paginated response of `GET /v1/locates`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LocatesResponse {
+    /// The locates in this page, newest first.
+    pub locates: Vec<Locate>,
+    /// Token for the next page, if any.
+    pub next_page_token: Option<String>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -585,6 +769,78 @@ mod tests {
         assert_eq!(position.unrealized_plpc, Some(Decimal::new(20, 2)));
     }
 
+    #[test]
+    fn deserialize_asset_with_refreshed_fields() {
+        let json = r#"{
+            "id": "b0b6dd9d-8b9b-48a9-ba46-b9d54906e415",
+            "class": "us_equity",
+            "exchange": "NASDAQ",
+            "symbol": "AAPL",
+            "name": "Apple Inc. Common Stock",
+            "status": "active",
+            "tradable": true,
+            "marginable": true,
+            "shortable": true,
+            "easy_to_borrow": true,
+            "borrow_status": "easy_to_borrow",
+            "fractionable": true,
+            "maintenance_margin_requirement": 30,
+            "margin_requirement_long": "30",
+            "margin_requirement_short": "30",
+            "attributes": ["has_options", "options_late_close", "warp_drive_enabled"]
+        }"#;
+        let asset: Asset = serde_json::from_str(json).unwrap();
+        assert_eq!(asset.symbol, "AAPL");
+        assert_eq!(asset.borrow_status, Some(BorrowStatus::EasyToBorrow));
+        // The replacement margin fields arrive as JSON strings, the
+        // deprecated one as a JSON number.
+        assert_eq!(asset.margin_requirement_long, Some(Decimal::new(30, 0)));
+        assert_eq!(asset.margin_requirement_short, Some(Decimal::new(30, 0)));
+        assert_eq!(asset.maintenance_margin_requirement, Some(30.0));
+        assert_eq!(asset.easy_to_borrow, Some(true));
+        // An unknown attribute is preserved rather than rejected.
+        assert_eq!(
+            asset.attributes,
+            vec![
+                AssetAttribute::HasOptions,
+                AssetAttribute::OptionsLateClose,
+                AssetAttribute::Other("warp_drive_enabled".into()),
+            ]
+        );
+
+        // Round-trip.
+        let reparsed: Asset =
+            serde_json::from_str(&serde_json::to_string(&asset).unwrap()).unwrap();
+        assert_eq!(reparsed.attributes, asset.attributes);
+        assert_eq!(reparsed.borrow_status, asset.borrow_status);
+        assert_eq!(
+            reparsed.margin_requirement_long,
+            asset.margin_requirement_long
+        );
+    }
+
+    #[test]
+    fn deserialize_asset_without_optional_fields() {
+        // Crypto assets omit the equity-only fields entirely.
+        let json = r#"{
+            "id": "276e2673-764b-4ab6-a611-caf665ca6340",
+            "class": "crypto",
+            "exchange": "CRYPTO",
+            "symbol": "BTC/USD",
+            "name": "Bitcoin / US Dollar",
+            "status": "active",
+            "tradable": true,
+            "min_order_size": "0.0001",
+            "min_trade_increment": "0.0001",
+            "price_increment": "1"
+        }"#;
+        let asset: Asset = serde_json::from_str(json).unwrap();
+        assert_eq!(asset.borrow_status, None);
+        assert_eq!(asset.margin_requirement_long, None);
+        assert!(asset.attributes.is_empty());
+        assert_eq!(asset.min_order_size, Some(Decimal::new(1, 4)));
+    }
+
     const FILL_ACTIVITY_JSON: &str = r#"{
         "id": "20220307115529661::4f8cb7a9-cc9b-46ea-bb48-a80ec1d5b4f8",
         "account_id": "5c56a945-89a0-4c5e-9d1f-2b3c4d5e6f70",
@@ -657,6 +913,184 @@ mod tests {
         assert_eq!(reparsed.net_amount, activity.net_amount);
     }
 
+    /// Two markets on the same instant: NYSE mid-session, and the overnight
+    /// venue BOATS whose core session runs through the night.
+    const CLOCK_V3_JSON: &str = r#"{
+        "clocks": [
+            {
+                "market": {
+                    "acronym": "NYSE",
+                    "name": "New York Stock Exchange",
+                    "timezone": "America/New_York",
+                    "mic": "XNYS"
+                },
+                "timestamp": "2025-06-24T14:15:22-04:00",
+                "is_market_day": true,
+                "next_market_open": "2025-06-25T09:30:00-04:00",
+                "next_market_close": "2025-06-24T16:00:00-04:00",
+                "phase": "core",
+                "phase_until": "2025-06-24T16:00:00-04:00"
+            },
+            {
+                "market": {
+                    "acronym": "BOATS",
+                    "name": "Blue Ocean Alternative Trading System",
+                    "timezone": "America/New_York"
+                },
+                "timestamp": "2025-06-24T14:15:22-04:00",
+                "is_market_day": true,
+                "next_market_open": "2025-06-24T20:00:00-04:00",
+                "next_market_close": "2025-06-25T04:00:00-04:00",
+                "phase": "closed",
+                "phase_until": "2025-06-24T20:00:00-04:00"
+            }
+        ]
+    }"#;
+
+    #[test]
+    fn deserialize_clock_v3_response() {
+        let clock: ClockV3Response = serde_json::from_str(CLOCK_V3_JSON).unwrap();
+        assert_eq!(clock.clocks.len(), 2);
+
+        let nyse = &clock.clocks[0];
+        assert_eq!(nyse.market.acronym, Market::NYSE);
+        assert_eq!(nyse.market.name, "New York Stock Exchange");
+        assert_eq!(nyse.market.timezone, "America/New_York");
+        assert_eq!(nyse.market.mic.as_deref(), Some("XNYS"));
+        assert_eq!(nyse.market.bic, None);
+        assert!(nyse.is_market_day);
+        assert_eq!(nyse.phase, MarketPhase::Core);
+        // The market's own offset is preserved rather than normalized to UTC.
+        assert_eq!(nyse.phase_until.to_rfc3339(), "2025-06-24T16:00:00-04:00");
+        assert_eq!(
+            nyse.timestamp.with_timezone(&Utc).to_rfc3339(),
+            "2025-06-24T18:15:22+00:00"
+        );
+
+        // The overnight venue is closed during the regular session and opens
+        // again in the evening.
+        let boats = &clock.clocks[1];
+        assert_eq!(boats.market.acronym, Market::BOATS);
+        assert_eq!(boats.market.mic, None);
+        assert_eq!(boats.phase, MarketPhase::Closed);
+        assert_eq!(
+            boats.next_market_open.to_rfc3339(),
+            "2025-06-24T20:00:00-04:00"
+        );
+        assert_eq!(
+            boats.next_market_close.to_rfc3339(),
+            "2025-06-25T04:00:00-04:00"
+        );
+
+        // Round-trip.
+        let json = serde_json::to_string(&clock).unwrap();
+        let reparsed: ClockV3Response = serde_json::from_str(&json).unwrap();
+        assert_eq!(reparsed.clocks.len(), 2);
+        assert_eq!(reparsed.clocks[1].market.acronym, Market::BOATS);
+        assert_eq!(reparsed.clocks[1].phase, MarketPhase::Closed);
+        assert_eq!(reparsed.clocks[0].phase_until, clock.clocks[0].phase_until);
+    }
+
+    #[test]
+    fn deserialize_clock_v3_with_unknown_market_and_phase() {
+        let json = r#"{
+            "clocks": [{
+                "market": {
+                    "acronym": "XPHL",
+                    "name": "Philadelphia Stock Exchange",
+                    "timezone": "America/New_York"
+                },
+                "timestamp": "2025-06-24T02:15:22-04:00",
+                "is_market_day": true,
+                "next_market_open": "2025-06-24T09:30:00-04:00",
+                "next_market_close": "2025-06-24T16:00:00-04:00",
+                "phase": "overnight",
+                "phase_until": "2025-06-24T04:00:00-04:00"
+            }]
+        }"#;
+        let clock: ClockV3Response = serde_json::from_str(json).unwrap();
+        let entry = &clock.clocks[0];
+        assert_eq!(entry.market.acronym, Market::Other("XPHL".into()));
+        assert_eq!(entry.phase, MarketPhase::Other("overnight".into()));
+    }
+
+    #[test]
+    fn deserialize_calendar_v3_response() {
+        let json = r#"{
+            "market": {
+                "acronym": "NYSE",
+                "name": "New York Stock Exchange",
+                "timezone": "America/New_York",
+                "mic": "XNYS"
+            },
+            "calendar": [{
+                "date": "2025-01-02",
+                "pre_start": "2025-01-02T04:00:00-05:00",
+                "pre_end": "2025-01-02T09:30:00-05:00",
+                "core_start": "2025-01-02T09:30:00-05:00",
+                "core_end": "2025-01-02T16:00:00-05:00",
+                "post_start": "2025-01-02T16:00:00-05:00",
+                "post_end": "2025-01-02T20:00:00-05:00",
+                "settlement_date": "2025-01-03"
+            }]
+        }"#;
+        let calendar: CalendarV3Response = serde_json::from_str(json).unwrap();
+        assert_eq!(calendar.market.acronym, Market::NYSE);
+        assert_eq!(calendar.calendar.len(), 1);
+
+        let day = &calendar.calendar[0];
+        assert_eq!(day.date, NaiveDate::from_ymd_opt(2025, 1, 2).unwrap());
+        assert_eq!(day.core_start.to_rfc3339(), "2025-01-02T09:30:00-05:00");
+        assert_eq!(day.core_end.to_rfc3339(), "2025-01-02T16:00:00-05:00");
+        assert_eq!(
+            day.pre_start.map(|t| t.to_rfc3339()).as_deref(),
+            Some("2025-01-02T04:00:00-05:00")
+        );
+        assert_eq!(
+            day.post_end.map(|t| t.to_rfc3339()).as_deref(),
+            Some("2025-01-02T20:00:00-05:00")
+        );
+        // A US venue has no lunch break.
+        assert_eq!(day.lunch_start, None);
+        assert_eq!(day.lunch_end, None);
+        assert_eq!(
+            day.settlement_date,
+            Some(NaiveDate::from_ymd_opt(2025, 1, 3).unwrap())
+        );
+
+        // Round-trip.
+        let json = serde_json::to_string(&calendar).unwrap();
+        let reparsed: CalendarV3Response = serde_json::from_str(&json).unwrap();
+        assert_eq!(reparsed.calendar[0].date, day.date);
+        assert_eq!(reparsed.calendar[0].core_start, day.core_start);
+        assert_eq!(reparsed.calendar[0].lunch_end, None);
+    }
+
+    #[test]
+    fn deserialize_calendar_v3_day_with_only_core_session() {
+        // An overnight venue reports its whole session as the core one, with
+        // no pre/post sessions and no settlement date.
+        let json = r#"{
+            "market": {
+                "acronym": "BOATS",
+                "name": "Blue Ocean Alternative Trading System",
+                "timezone": "America/New_York"
+            },
+            "calendar": [{
+                "date": "2025-01-02",
+                "core_start": "2025-01-01T20:00:00-05:00",
+                "core_end": "2025-01-02T04:00:00-05:00"
+            }]
+        }"#;
+        let calendar: CalendarV3Response = serde_json::from_str(json).unwrap();
+        let day = &calendar.calendar[0];
+        assert_eq!(calendar.market.acronym, Market::BOATS);
+        assert_eq!(day.core_start.to_rfc3339(), "2025-01-01T20:00:00-05:00");
+        assert_eq!(day.pre_start, None);
+        assert_eq!(day.post_end, None);
+        assert_eq!(day.settlement_date, None);
+    }
+
     #[test]
     fn deserialize_mixed_activity_array() {
         let json = format!("[{FILL_ACTIVITY_JSON},{DIV_ACTIVITY_JSON}]");
@@ -670,5 +1104,131 @@ mod tests {
             AccountActivity::NonTrade(n) => assert_eq!(n.activity_type, ActivityType::Div),
             other => panic!("expected non-trade activity, got {other:?}"),
         }
+    }
+
+    const ACTIVE_LOCATE_JSON: &str = r#"{
+        "id": "550e8400-e29b-41d4-a716-446655440000",
+        "symbol": "TSLA",
+        "requested_qty": 100,
+        "all_or_none": false,
+        "status": "active",
+        "created_at": "2026-01-02T15:04:05Z",
+        "located_qty": 100,
+        "located_price": "0.05",
+        "total_fee": "5.00",
+        "limit_price": "0.05",
+        "expires_at": "2026-01-03T01:00:00Z"
+    }"#;
+
+    #[test]
+    fn deserialize_active_locate() {
+        let locate: Locate = serde_json::from_str(ACTIVE_LOCATE_JSON).unwrap();
+        assert_eq!(locate.symbol, "TSLA");
+        assert_eq!(locate.requested_qty, 100);
+        assert_eq!(locate.located_qty, Some(100));
+        assert_eq!(locate.status, LocateStatus::Active);
+        assert!(!locate.all_or_none);
+        // Locate money fields are string-encoded like every trading number.
+        assert_eq!(locate.located_price, Some(Decimal::new(5, 2)));
+        assert_eq!(locate.total_fee, Some(Decimal::new(500, 2)));
+        assert_eq!(locate.limit_price, Some(Decimal::new(5, 2)));
+        assert_eq!(
+            locate.expires_at.map(|t| t.to_rfc3339()),
+            Some("2026-01-03T01:00:00+00:00".to_string())
+        );
+        assert_eq!(locate.rejection_reason, None);
+
+        let json = serde_json::to_string(&locate).unwrap();
+        let reparsed: Locate = serde_json::from_str(&json).unwrap();
+        assert_eq!(reparsed.id, locate.id);
+        assert_eq!(reparsed.total_fee, locate.total_fee);
+    }
+
+    #[test]
+    fn deserialize_rejected_locate_without_fill_fields() {
+        let json = r#"{
+            "id": "0f2b0b26-4b0e-4d3e-9c1e-6f2ff6a9f0c1",
+            "symbol": "GME",
+            "requested_qty": 500,
+            "all_or_none": true,
+            "status": "rejected",
+            "created_at": "2026-01-02T15:04:05Z",
+            "rejection_reason": "inventory_unavailable"
+        }"#;
+        let locate: Locate = serde_json::from_str(json).unwrap();
+        assert_eq!(locate.status, LocateStatus::Rejected);
+        assert!(locate.all_or_none);
+        assert_eq!(locate.located_qty, None);
+        assert_eq!(locate.located_price, None);
+        assert_eq!(locate.total_fee, None);
+        assert_eq!(locate.expires_at, None);
+        assert_eq!(
+            locate.rejection_reason.as_deref(),
+            Some("inventory_unavailable")
+        );
+    }
+
+    #[test]
+    fn deserialize_locates_page() {
+        let json = format!(
+            r#"{{"locates": [{ACTIVE_LOCATE_JSON}], "next_page_token": "eyJpZCI6IjU1MGU4NDAwIn0K"}}"#
+        );
+        let page: LocatesResponse = serde_json::from_str(&json).unwrap();
+        assert_eq!(page.locates.len(), 1);
+        assert_eq!(
+            page.next_page_token.as_deref(),
+            Some("eyJpZCI6IjU1MGU4NDAwIn0K")
+        );
+
+        // A last page carries a null token.
+        let json = format!(r#"{{"locates": [{ACTIVE_LOCATE_JSON}], "next_page_token": null}}"#);
+        let page: LocatesResponse = serde_json::from_str(&json).unwrap();
+        assert_eq!(page.next_page_token, None);
+    }
+
+    #[test]
+    fn deserialize_locate_quotes_with_errors() {
+        let json = r#"{
+            "quotes": [
+                {
+                    "symbol": "TSLA",
+                    "available_qty": 1000,
+                    "price": "0.0123",
+                    "quoted_at": "2026-01-02T15:04:05Z"
+                },
+                {
+                    "symbol": "GME",
+                    "available_qty": 0,
+                    "quoted_at": "2026-01-02T15:04:05Z"
+                }
+            ],
+            "errors": [
+                {"symbol": "AAPL", "code": "easy_to_borrow", "message": "symbol is easy to borrow"},
+                {"symbol": "XYZ", "code": "market_closed", "message": "locates are closed"}
+            ]
+        }"#;
+        let quotes: LocateQuotesResponse = serde_json::from_str(json).unwrap();
+        assert_eq!(quotes.quotes.len(), 2);
+        assert_eq!(quotes.quotes[0].available_qty, 1000);
+        assert_eq!(quotes.quotes[0].price, Some(Decimal::new(123, 4)));
+        // No availability means no price is quoted.
+        assert_eq!(quotes.quotes[1].available_qty, 0);
+        assert_eq!(quotes.quotes[1].price, None);
+
+        assert_eq!(quotes.errors[0].code, LocateQuoteErrorCode::EasyToBorrow);
+        assert_eq!(quotes.errors[0].symbol, "AAPL");
+        // A code added after this crate was released still parses.
+        assert_eq!(
+            quotes.errors[1].code,
+            LocateQuoteErrorCode::Other("market_closed".into())
+        );
+    }
+
+    #[test]
+    fn deserialize_locate_quotes_without_errors_field() {
+        let json = r#"{"quotes": []}"#;
+        let quotes: LocateQuotesResponse = serde_json::from_str(json).unwrap();
+        assert!(quotes.quotes.is_empty());
+        assert!(quotes.errors.is_empty());
     }
 }

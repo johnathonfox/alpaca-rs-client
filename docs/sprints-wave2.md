@@ -10,7 +10,23 @@ Ordering: 7→8→9 first (highest value, all trading-side), then 10–13 in any
 order (independent modules), 14 last (grab-bag). Deferred per ADR 0002: crypto
 wallets/funding, tokenization, fixed income, crypto perps.
 
-## Sprint 7 — Fix multi-leg options orders
+## Status
+
+| Sprint | State |
+| --- | --- |
+| 7 — multi-leg options orders | done |
+| 8 — account activities | done |
+| 9 — do-not-exercise + asset model refresh | done |
+| 10 — v3 clock + calendar | done |
+| 11 — auctions, single-symbol, meta endpoints | done |
+| 12 — short-sale locates | done |
+| 13 — SSE event streams | done |
+| 14 — low-priority grab-bag | done |
+
+Keep this table current as sprints land — it is the fastest answer to "where
+are we?" for a fresh session.
+
+## Sprint 7 — Fix multi-leg options orders *(done)*
 
 **Bug**: `OrderClass::Mleg` exists (`src/trading/enums.rs`) but
 `OrderRequest` (`src/trading/requests.rs`) has no `legs`/`position_intent`, so
@@ -29,7 +45,7 @@ spreads can't be submitted.
   validation errors; new query filters serialize. Wiremock: POST `/v2/orders`
   with mleg body asserted.
 
-## Sprint 8 — Account activities
+## Sprint 8 — Account activities *(done)*
 
 - `src/trading/activities.rs` (or extend mod.rs): `get_account_activities(
   &AccountActivitiesRequest)` → `GET /v2/account/activities`;
@@ -48,7 +64,7 @@ spreads can't be submitted.
 - Tests: fixture round-trips for both activity families; query serialization;
   wiremock happy path + one error.
 
-## Sprint 9 — Do-not-exercise + asset model refresh
+## Sprint 9 — Do-not-exercise + asset model refresh *(done)*
 
 - `src/trading/mod.rs`: `do_not_exercise_option(symbol_or_contract_id)` →
   `POST /v2/positions/{symbol_or_contract_id}/do-not-exercise` (204/empty
@@ -64,7 +80,7 @@ spreads can't be submitted.
 - Tests: fixture with new fields + unknown attribute → `Other`; wiremock
   do-not-exercise 204.
 
-## Sprint 10 — v3 clock + calendar (multi-market)
+## Sprint 10 — v3 clock + calendar (multi-market) *(done)*
 
 - `src/trading/mod.rs`: `get_clock_v3(markets: &[Market])` → `GET /v3/clock`;
   `get_calendar_v3(market, &CalendarRequest)` → `GET /v3/calendar/{market}`.
@@ -75,7 +91,7 @@ spreads can't be submitted.
 - Keep `/v2/clock` + `/v2/calendar` untouched (legacy still served).
 - Tests: fixture round-trips incl. overnight BOATS phase; query serialization.
 
-## Sprint 11 — Stock auctions + single-symbol + meta endpoints
+## Sprint 11 — Stock auctions + single-symbol + meta endpoints *(done)*
 
 - `src/data/stock.rs`:
   - `auctions(&AuctionsRequest)` → `GET /v2/stocks/auctions`, and
@@ -95,7 +111,7 @@ spreads can't be submitted.
 - Tests: fixture round-trips; wiremock two-page auctions; path assertions for
   single-symbol variants.
 
-## Sprint 12 — Short-sale locates
+## Sprint 12 — Short-sale locates *(done)*
 
 - `src/trading/locates.rs` (new, `/v1/...` paths on the trading host — second
   base path; `RestClient` already takes full paths, verify join semantics):
@@ -114,7 +130,7 @@ spreads can't be submitted.
 - Tests: fixtures, 400 on non-round-lot qty (client-side validation), wiremock
   happy paths.
 
-## Sprint 13 — SSE event streams
+## Sprint 13 — SSE event streams *(done)*
 
 New transport (ADR 0002 ruling: reqwest byte stream + small line parser; only
 add `eventsource-stream` if the parser exceeds ~100 lines).
@@ -130,7 +146,7 @@ add `eventsource-stream` if the parser exceeds ~100 lines).
 - Tests: parser unit tests from canned SSE byte streams (frame splitting,
   multi-line data, Last-Event-Id bookkeeping); no live network.
 
-## Sprint 14 — Low-priority grab-bag
+## Sprint 14 — Low-priority grab-bag *(done)*
 
 - Watchlists by name: `GET/PUT/POST/DELETE /v2/watchlists:by_name` + add/remove
   asset by name (4–6 methods mirroring the by-ID ones).
@@ -144,5 +160,7 @@ add `eventsource-stream` if the parser exceeds ~100 lines).
 
 - Full verification suite + `cargo doc` warning-free.
 - README feature list and `docs/diagrams/architecture.mmd` updated (new
-  clients: locates, events/SSE, forex).
-- Mark ADR 0002 accepted.
+  clients: locates, events/SSE, forex). Both were refreshed for sprints 7–8;
+  refresh again as each remaining sprint lands.
+- ~~Mark ADR 0002 accepted~~ (done — the decision is accepted and in force;
+  the ADR carries a note tracking rollout progress).

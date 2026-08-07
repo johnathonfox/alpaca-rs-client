@@ -1,29 +1,44 @@
 # alpaca-rs
 
 An async Rust client for the [Alpaca](https://alpaca.markets) **Trading API** and
-**Market Data APIs**, including their WebSocket streams. Scope matches the
-Python SDK [`alpaca-py`](https://github.com/alpacahq/alpaca-py) (trading + data
-+ streams); see [docs/adr/0001](docs/adr/0001-alpaca-py-parity-scope-and-architecture.md)
-for the scope decision — the Broker, Connect (OAuth flow), and FIX APIs are
-deliberately out of scope.
+**Market Data APIs**, including their WebSocket streams. The baseline scope
+matches the Python SDK [`alpaca-py`](https://github.com/alpacahq/alpaca-py)
+(trading + data + streams), extended with a curated set of endpoints the SDK
+omits; see [docs/adr/0001](docs/adr/0001-alpaca-py-parity-scope-and-architecture.md)
+and [docs/adr/0002](docs/adr/0002-beyond-parity-coverage.md) for the scope
+decisions — the Broker, Connect (OAuth flow), and FIX APIs are deliberately out
+of scope.
 
 ## Features
 
 - **Trading** (`TradingClient`) — account + configurations, orders (market,
-  limit, stop, stop-limit, trailing stop; simple/bracket/OCO/OTO classes),
-  positions (incl. partial close and option exercise), portfolio history,
-  assets, clock/calendar, watchlists, corporate action announcements, option
-  contracts. Paper and live base URLs.
+  limit, stop, stop-limit, trailing stop; simple/bracket/OCO/OTO classes, and
+  multi-leg option spreads via `OrderClass::Mleg` with up to four `OrderLeg`s),
+  positions (incl. partial close, option exercise and do-not-exercise),
+  account activities, portfolio history, assets (typed `AssetAttribute`
+  filter, `borrow_status`), clock/calendar (`/v2` plus the multi-market `/v3`
+  clock and per-market calendar), short-sale locates (`/v1/locates` quotes,
+  create, list, get), watchlists (by id or by name), corporate action
+  announcements, option contracts. Paper and live base URLs.
 - **Market data** — historical + latest + snapshots for stocks
-  (`StockHistoricalDataClient`), crypto (`CryptoHistoricalDataClient`), and
-  options (`OptionHistoricalDataClient`), plus `NewsClient`,
-  `ScreenerClient` (most actives, movers), and `CorporateActionsClient`.
-  List endpoints auto-paginate (`next_page_token` is followed for you);
-  request structs keep `limit`/`page_token` for manual control.
+  (`StockHistoricalDataClient`, including opening/closing auctions,
+  single-symbol variants and the `meta` condition-code/exchange tables),
+  crypto (`CryptoHistoricalDataClient`), and options
+  (`OptionHistoricalDataClient`, incl. `meta` conditions/exchanges), plus
+  `NewsClient`, `ScreenerClient` (most actives, movers),
+  `CorporateActionsClient`, `ForexClient` (historical + latest currency
+  rates), and `LogoClient` (raw logo images). List endpoints auto-paginate
+  (`next_page_token` is followed for you); request structs keep
+  `limit`/`page_token` for manual control.
 - **Streaming** (`stream` module) — `MarketDataStream` for stocks, crypto,
   options, and news channels (trades, quotes, bars, orderbooks, statuses,
   corrections), and `TradingStream` for `trade_updates`. Full auth handshake,
   subscribe/unsubscribe, and opt-in auto-reconnect with resubscription.
+- **Event streams** (`stream` module, Server-Sent Events) —
+  `ActivityEventsClient` for account activities and
+  `CorporateActionEventsClient` for corporate action insert/update/delete
+  mutations. Both replay history from `since`/`since_id` before going live,
+  and resume from the last event id on auto-reconnect.
 - **Resilience** — automatic retry with backoff on HTTP 429 / transient 5xx;
   every client accepts a `base_url` override for testing or proxies.
 - No panics in library code: everything returns `alpaca_rs::Result<T>`.
@@ -100,7 +115,8 @@ while let Some(messages) = stream.next().await? {
 - `src/stream/` — WebSocket streams
 - `src/rest.rs`, `src/error.rs` — shared infrastructure
 - [docs/adr/](docs/adr/) — architecture decision records
-- [docs/sprints.md](docs/sprints.md) — build plan
+- [docs/sprints.md](docs/sprints.md) — build plan (wave 1, complete) and
+  [docs/sprints-wave2.md](docs/sprints-wave2.md) (wave 2, in progress)
 - [docs/diagrams/architecture.mmd](docs/diagrams/architecture.mmd) — module diagram
 
 ## Development

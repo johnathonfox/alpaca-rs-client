@@ -5,10 +5,11 @@
 //! values, and no env vars or live Alpaca endpoints are touched.
 
 use alpaca_rs::data::{
-    BarsRequest, CorporateActionsClient, CorporateActionsRequest, CryptoFeed,
-    CryptoHistoricalDataClient, LatestRequest, MarketMoversRequest, MarketType, MostActivesBy,
-    MostActivesRequest, NewsClient, NewsRequest, OptionHistoricalDataClient, OptionsFeed,
-    ScreenerClient, StockHistoricalDataClient, TimeFrame,
+    AuctionsRequest, BarsRequest, CorporateActionsClient, CorporateActionsRequest, CryptoFeed,
+    CryptoHistoricalDataClient, DataFeed, ForexClient, ForexRatesRequest, LatestForexRatesRequest,
+    LatestRequest, LogoClient, MarketMoversRequest, MarketType, MostActivesBy, MostActivesRequest,
+    NewsClient, NewsRequest, OptionHistoricalDataClient, OptionsFeed, ScreenerClient,
+    StockHistoricalDataClient, Tape, TickType, TimeFrame, TimeFrameUnit,
 };
 use alpaca_rs::rest::Credentials;
 use alpaca_rs::{Error, Result};
@@ -160,6 +161,216 @@ async fn stock_snapshots_parses_single_page() -> Result<()> {
     );
     assert!(snap.minute_bar.is_some());
     assert_eq!(resp.next_page_token, None);
+
+    server.verify().await;
+    Ok(())
+}
+
+fn auction_json(date: &str, open: f64, close: f64) -> serde_json::Value {
+    json!({
+        "d": date,
+        "o": [{"t": format!("{date}T13:30:00.048Z"), "x": "P", "p": open, "s": 1000, "c": "Q"}],
+        "c": [{"t": format!("{date}T20:00:00.106Z"), "x": "P", "p": close, "s": 2000, "c": "M"}]
+    })
+}
+
+/// Stock auctions across two pages: the client must follow the
+/// `next_page_token` and merge the per-symbol lists.
+#[tokio::test]
+async fn stock_auctions_follows_two_pages_and_merges() -> Result<()> {
+    let server = MockServer::start().await;
+
+    let page1 = json!({
+        "auctions": {"AAPL": [auction_json("2024-07-23", 223.0, 223.9)]},
+        "next_page_token": "page2token"
+    });
+    auth(Mock::given(method("GET")))
+        .and(path("/v2/stocks/auctions"))
+        .and(query_param("symbols", "AAPL"))
+        .and(query_param_is_missing("page_token"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(&page1))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let page2 = json!({
+        "auctions": {"AAPL": [auction_json("2024-07-24", 224.0, 224.62)]},
+        "next_page_token": null
+    });
+    auth(Mock::given(method("GET")))
+        .and(path("/v2/stocks/auctions"))
+        .and(query_param("symbols", "AAPL"))
+        .and(query_param("page_token", "page2token"))
+        .and(query_param("limit", "10000"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(&page2))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let client = StockHistoricalDataClient::with_base_url(test_credentials(), &server.uri())?;
+    let resp = client.auctions(&AuctionsRequest::new(["AAPL"])).await?;
+
+    let days = &resp.auctions["AAPL"];
+    assert_eq!(days.len(), 2, "both pages must be merged");
+    assert_eq!(days[1].closing[0].price, 224.62);
+    assert_eq!(days[0].opening[0].size, Some(1000.0));
+    assert_eq!(resp.next_page_token, None);
+
+    server.verify().await;
+    Ok(())
+}
+
+/// The single-symbol variants put the symbol in the path and must not repeat
+/// it as a `symbols` query parameter.
+#[tokio::test]
+async fn stock_single_symbol_endpoints_use_the_symbol_path() -> Result<()> {
+    let server = MockServer::start().await;
+
+    let bars = json!({
+        "symbol": "AAPL",
+        "bars": [bar_json("2024-07-24T13:30:00Z", 224.62)],
+        "next_page_token": null
+    });
+    auth(Mock::given(method("GET")))
+        .and(path("/v2/stocks/AAPL/bars"))
+        .and(query_param("timeframe", "1Min"))
+        .and(query_param_is_missing("symbols"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(&bars))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    // No data in the interval: the API answers with a null list.
+    let auctions = json!({"symbol": "AAPL", "auctions": null, "next_page_token": null});
+    auth(Mock::given(method("GET")))
+        .and(path("/v2/stocks/AAPL/auctions"))
+        .and(query_param_is_missing("symbols"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(&auctions))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let trade = json!({
+        "symbol": "AAPL",
+        "trade": {"t": "2024-07-24T19:59:59.639Z", "p": 224.62, "s": 4.0,
+                  "x": "Q", "i": 52983525029461_i64, "c": ["@"], "z": "C"}
+    });
+    auth(Mock::given(method("GET")))
+        .and(path("/v2/stocks/AAPL/trades/latest"))
+        .and(query_param_is_missing("symbols"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(&trade))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let snapshot = json!({
+        "symbol": "AAPL",
+        "latestTrade": {"t": "2024-07-24T19:59:59.639Z", "p": 224.62, "s": 4.0,
+                        "x": "Q", "i": 52983525029461_i64, "c": ["@"], "z": "C"},
+        "dailyBar": bar_json("2024-07-24T04:00:00Z", 224.62),
+        "currency": "USD"
+    });
+    auth(Mock::given(method("GET")))
+        .and(path("/v2/stocks/AAPL/snapshot"))
+        .and(query_param("feed", "sip"))
+        .and(query_param_is_missing("symbols"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(&snapshot))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let client = StockHistoricalDataClient::with_base_url(test_credentials(), &server.uri())?;
+
+    let bars = client
+        .bars_for_symbol("AAPL", &BarsRequest::new(["AAPL"], TimeFrame::MINUTE))
+        .await?;
+    assert_eq!(bars.symbol, "AAPL");
+    assert_eq!(bars.bars.len(), 1);
+    assert_eq!(bars.bars[0].close, 224.62);
+
+    let auctions = client
+        .auctions_for_symbol("AAPL", &AuctionsRequest::new(["AAPL"]))
+        .await?;
+    assert!(auctions.auctions.is_empty(), "null list must be empty");
+
+    let trade = client
+        .latest_trade_for_symbol("AAPL", &LatestRequest::new(["AAPL"]))
+        .await?;
+    assert_eq!(trade.trade.price, 224.62);
+
+    let mut req = LatestRequest::new(["AAPL"]);
+    req.feed = Some(DataFeed::Sip);
+    let snapshot = client.snapshot("AAPL", &req).await?;
+    assert_eq!(snapshot.symbol, "AAPL");
+    assert_eq!(
+        snapshot.snapshot.daily_bar.as_ref().map(|b| b.close),
+        Some(224.62)
+    );
+
+    server.verify().await;
+    Ok(())
+}
+
+#[tokio::test]
+async fn stock_meta_conditions_and_exchanges() -> Result<()> {
+    let server = MockServer::start().await;
+
+    let conditions = json!({"@": "Regular Sale", "A": "Acquisition"});
+    auth(Mock::given(method("GET")))
+        .and(path("/v2/stocks/meta/conditions/trade"))
+        .and(query_param("tape", "A"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(&conditions))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let quote_conditions = json!({"R": "Regular", "C": "Closing"});
+    auth(Mock::given(method("GET")))
+        .and(path("/v2/stocks/meta/conditions/quote"))
+        .and(query_param("tape", "C"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(&quote_conditions))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let exchanges = json!({"N": "New York Stock Exchange", "V": "IEX"});
+    auth(Mock::given(method("GET")))
+        .and(path("/v2/stocks/meta/exchanges"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(&exchanges))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let client = StockHistoricalDataClient::with_base_url(test_credentials(), &server.uri())?;
+
+    let trade_conditions = client.trade_conditions(Tape::A).await?;
+    assert_eq!(trade_conditions["@"], "Regular Sale");
+
+    let quote_conditions = client.quote_conditions(Tape::C).await?;
+    assert_eq!(quote_conditions["R"], "Regular");
+
+    let exchanges = client.exchanges().await?;
+    assert_eq!(exchanges["V"], "IEX");
+
+    server.verify().await;
+    Ok(())
+}
+
+#[tokio::test]
+async fn option_meta_conditions_uses_ticktype_path() -> Result<()> {
+    let server = MockServer::start().await;
+
+    let body = json!({"a": "SLAN - Single Leg Auction Non ISO"});
+    auth(Mock::given(method("GET")))
+        .and(path("/v1beta1/options/meta/conditions/quote"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(&body))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let client = OptionHistoricalDataClient::with_base_url(test_credentials(), &server.uri())?;
+    let conditions = client.conditions(TickType::Quote).await?;
+    assert_eq!(conditions["a"], "SLAN - Single Leg Auction Non ISO");
 
     server.verify().await;
     Ok(())
@@ -386,6 +597,150 @@ async fn news_parses_articles() -> Result<()> {
     assert_eq!(resp.news.len(), 1);
     assert_eq!(resp.news[0].headline, "Apple Reports Third Quarter Results");
     assert_eq!(resp.news[0].symbols, vec!["AAPL"]);
+
+    server.verify().await;
+    Ok(())
+}
+
+fn forex_rate_json(timestamp: &str, mid: f64) -> serde_json::Value {
+    json!({"t": timestamp, "bp": mid - 0.1, "ap": mid + 0.1, "mp": mid})
+}
+
+/// Forex rates across two pages: the client must send the currency pairs and
+/// timeframe, pass the token back, and merge both pages per currency pair.
+#[tokio::test]
+async fn forex_rates_follows_two_pages_and_merges() -> Result<()> {
+    let server = MockServer::start().await;
+
+    let page1 = json!({
+        "rates": {"USDJPY": [forex_rate_json("2024-07-24T00:00:00Z", 153.8)]},
+        "next_page_token": "page2token"
+    });
+    auth(Mock::given(method("GET")))
+        .and(path("/v1beta1/forex/rates"))
+        .and(query_param("currency_pairs", "USDJPY,USDMXN"))
+        .and(query_param("timeframe", "1Day"))
+        .and(query_param_is_missing("page_token"))
+        // No default page size is imposed on forex rates.
+        .and(query_param_is_missing("limit"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(&page1))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let page2 = json!({
+        "rates": {
+            "USDJPY": [forex_rate_json("2024-07-25T00:00:00Z", 154.2)],
+            "USDMXN": [forex_rate_json("2024-07-25T00:00:00Z", 18.2)]
+        },
+        "next_page_token": null
+    });
+    auth(Mock::given(method("GET")))
+        .and(path("/v1beta1/forex/rates"))
+        .and(query_param("page_token", "page2token"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(&page2))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let client = ForexClient::with_base_url(test_credentials(), &server.uri())?;
+    let mut req = ForexRatesRequest::new(["USDJPY", "USDMXN"]);
+    req.timeframe = Some(TimeFrame::new(1, TimeFrameUnit::Day)?);
+    let resp = client.rates(&req).await?;
+
+    let usdjpy = &resp.rates["USDJPY"];
+    assert_eq!(usdjpy.len(), 2);
+    assert_eq!(usdjpy[0].mid_price, 153.8);
+    assert_eq!(usdjpy[1].bid_price, 154.1);
+    assert_eq!(resp.rates["USDMXN"].len(), 1);
+    assert_eq!(resp.next_page_token, None);
+
+    server.verify().await;
+    Ok(())
+}
+
+#[tokio::test]
+async fn forex_latest_rates_parses_per_pair_map() -> Result<()> {
+    let server = MockServer::start().await;
+
+    let body = json!({
+        "rates": {"USDJPY": forex_rate_json("2024-07-24T12:00:00Z", 153.8)}
+    });
+    auth(Mock::given(method("GET")))
+        .and(path("/v1beta1/forex/latest/rates"))
+        .and(query_param("currency_pairs", "USDJPY"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(&body))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let client = ForexClient::with_base_url(test_credentials(), &server.uri())?;
+    let resp = client
+        .latest_rates(&LatestForexRatesRequest::new(["USDJPY"]))
+        .await?;
+
+    assert_eq!(resp.rates["USDJPY"].ask_price, 153.9);
+
+    server.verify().await;
+    Ok(())
+}
+
+/// The logos endpoint answers with image bytes, not JSON: the client must
+/// hand them back verbatim together with the content type, and must only send
+/// `placeholder` when it is explicitly turned off.
+#[tokio::test]
+async fn logo_returns_image_bytes_and_content_type() -> Result<()> {
+    let server = MockServer::start().await;
+
+    // A one-pixel PNG stands in for the real 300x300 image.
+    let png: Vec<u8> = vec![0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0xff];
+    auth(Mock::given(method("GET")))
+        .and(path("/v1beta1/logos/AAPL"))
+        .and(query_param_is_missing("placeholder"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_bytes(png.clone())
+                .insert_header("content-type", "image/png"),
+        )
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let client = LogoClient::with_base_url(test_credentials(), &server.uri())?;
+    let logo = client.logo("AAPL").await?;
+
+    assert_eq!(logo.bytes, png);
+    assert_eq!(logo.content_type.as_deref(), Some("image/png"));
+
+    server.verify().await;
+    Ok(())
+}
+
+#[tokio::test]
+async fn logo_without_placeholder_sends_flag_and_maps_404() -> Result<()> {
+    let server = MockServer::start().await;
+
+    auth(Mock::given(method("GET")))
+        .and(path("/v1beta1/logos/NOLOGO"))
+        .and(query_param("placeholder", "false"))
+        .respond_with(ResponseTemplate::new(404).set_body_string("logo not found"))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let client = LogoClient::with_base_url(test_credentials(), &server.uri())?;
+    let err = client
+        .logo_without_placeholder("NOLOGO")
+        .await
+        .expect_err("404 must surface as an error");
+
+    match err {
+        Error::Api { status, message } => {
+            assert_eq!(status, 404);
+            assert!(message.contains("logo not found"), "message: {message}");
+        }
+        other => panic!("expected Error::Api, got {other:?}"),
+    }
 
     server.verify().await;
     Ok(())

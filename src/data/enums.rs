@@ -129,6 +129,50 @@ impl MarketType {
     }
 }
 
+/// The consolidated tape a stock condition-code table applies to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "UPPERCASE")]
+pub enum Tape {
+    /// Tape A — NYSE-listed securities.
+    A,
+    /// Tape B — NYSE Arca, NYSE American and other regionally listed
+    /// securities.
+    B,
+    /// Tape C — Nasdaq-listed securities.
+    C,
+}
+
+impl Tape {
+    /// The tape as it appears in query parameters.
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Tape::A => "A",
+            Tape::B => "B",
+            Tape::C => "C",
+        }
+    }
+}
+
+/// The kind of tick a condition-code table describes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TickType {
+    /// Trade conditions.
+    Trade,
+    /// Quote conditions.
+    Quote,
+}
+
+impl TickType {
+    /// The tick type as it appears in URL paths.
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            TickType::Trade => "trade",
+            TickType::Quote => "quote",
+        }
+    }
+}
+
 /// The type of a corporate action.
 ///
 /// ref. <https://docs.alpaca.markets/reference/corporateactions-1>
@@ -356,6 +400,22 @@ mod tests {
         let market_type: MarketType = serde_json::from_str("\"crypto\"").unwrap();
         assert_eq!(market_type, MarketType::Crypto);
         assert_eq!(market_type.as_str(), "crypto");
+    }
+
+    #[test]
+    fn meta_enums_serde_round_trip() {
+        assert_eq!(serde_json::to_string(&Tape::A).unwrap(), "\"A\"");
+        assert_eq!(Tape::B.as_str(), "B");
+        let tape: Tape = serde_json::from_str("\"C\"").unwrap();
+        assert_eq!(tape, Tape::C);
+
+        assert_eq!(
+            serde_json::to_string(&TickType::Trade).unwrap(),
+            "\"trade\""
+        );
+        assert_eq!(TickType::Quote.as_str(), "quote");
+        let tick_type: TickType = serde_json::from_str("\"quote\"").unwrap();
+        assert_eq!(tick_type, TickType::Quote);
     }
 
     #[test]

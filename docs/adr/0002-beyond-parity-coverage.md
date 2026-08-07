@@ -1,8 +1,13 @@
 # ADR 0002: Coverage beyond alpaca-py parity
 
-- Status: proposed
+- Status: accepted
 - Date: 2026-08-05
 - Supersedes: the follow-ups section of [ADR 0001](0001-alpaca-py-parity-scope-and-architecture.md)
+
+> Rollout is complete: sprints 7–14 have all shipped. See
+> [docs/sprints-wave2.md](../sprints-wave2.md) for per-sprint status. This
+> status field tracks the *decision*, which is accepted and in force — not the
+> rollout.
 
 ## Context / Problem
 
