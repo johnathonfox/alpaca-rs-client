@@ -6,7 +6,7 @@ version = "0.1.0"
 edition = "2024"
 description = "Async Rust client for the Alpaca trading and market data APIs (REST + WebSocket), with alpaca-py parity"
 license = "MIT OR Apache-2.0"
-repository = "https://github.com/johnathonfox/alpaca-rs"
+repository = "https://github.com/johnathonfox/alpaca-rs-client"
 keywords = ["alpaca", "trading", "stocks", "market-data", "finance"]
 categories = ["api-bindings", "finance"]
 

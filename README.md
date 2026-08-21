@@ -1,4 +1,4 @@
-# alpaca-rs
+# alpaca-rs-client
 
 An async Rust client for the [Alpaca](https://alpaca.markets) **Trading API** and
 **Market Data APIs**, including their WebSocket streams. The baseline scope

@@ -4,14 +4,15 @@ Guidance for AI agents (Kimi Code CLI and others) working in this repository.
 
 ## Project
 
-`alpaca-rs` — a Rust library crate for the [Alpaca](https://alpaca.markets) API
-(market data and trading). Library only: source lives in `src/`, public API is
-exported from `src/lib.rs`. Published on crates.io as `alpaca-rs-client`
-(library name `alpaca_rs_client`) because the `alpaca-rs` name was taken by an
+`alpaca-rs-client` — a Rust library crate for the [Alpaca](https://alpaca.markets)
+API (market data and trading). Library only: source lives in `src/`, public API
+is exported from `src/lib.rs`. Published on crates.io as `alpaca-rs-client`
+(library name `alpaca_rs_client`); the bare `alpaca-rs` name was taken by an
 unrelated crate.
 
 - Edition: 2024 (requires a recent stable toolchain)
-- GitHub: `git@github.com:johnathonfox/alpaca-rs.git`, default branch `main`
+- GitHub: `git@github.com:johnathonfox/alpaca-rs-client.git`, default branch
+  `main`
 
 ## Layout
 
