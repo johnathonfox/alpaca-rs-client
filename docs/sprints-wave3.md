@@ -69,3 +69,8 @@ only to mirror the ADR's structure.
 - `cargo build` / `test` / `clippy --all-targets -- -D warnings` / `fmt` all
   clean; `cargo doc --no-deps` warning-free.
 - README feature list and `docs/diagrams/architecture.mmd` updated.
+- Follow-ups after landing: `tests/live_smoke.rs` sweeps extended to the new
+  read-only endpoints (run against a paper account — all gated surfaces
+  returned the expected 403/404s), `tests/live_orders.rs` added (opt-in paper
+  order submit/cancel round-trip), and `examples/news.rs` added (symbol-arg
+  news fetch used to verify `NewsClient` against live data).

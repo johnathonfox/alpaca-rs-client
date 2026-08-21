@@ -29,7 +29,8 @@ exported from `src/lib.rs`.
   (`ActivityEventsClient`, `CorporateActionEventsClient`)
 - `src/broker.rs` — Broker API fixed-income asset lists
   (`FixedIncomeAssetsClient`; Basic Auth via `Credentials::from_broker_env`)
-- `examples/quickstart.rs` — runnable demo behind env credentials
+- `examples/quickstart.rs` — runnable demo behind env credentials;
+  `examples/news.rs` — news fetch taking a symbol argument
 - `tests/` — wiremock-based integration tests (offline; clients pointed at the
   mock server via each client's `with_base_url` constructor)
 - `docs/adr/` — architecture decision records; `docs/sprints*.md` — build

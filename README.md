@@ -98,7 +98,8 @@ async fn main() -> alpaca_rs::Result<()> {
 ```
 
 See `examples/quickstart.rs` for a runnable version including a WebSocket
-stream.
+stream, and `examples/news.rs` for a minimal symbol-arg news fetch
+(`cargo run --example news -- SOXL`).
 
 ## WebSocket streaming
 
