@@ -3,9 +3,9 @@
 //! Hermetic: the server is wiremock on localhost, credentials are dummy
 //! values, and no env vars or live Alpaca endpoints are touched.
 
-use alpaca_rs::data::enums::Sort;
-use alpaca_rs::rest::Credentials;
-use alpaca_rs::trading::{
+use alpaca_rs_client::data::enums::Sort;
+use alpaca_rs_client::rest::Credentials;
+use alpaca_rs_client::trading::{
     AccountActivitiesRequest, AccountActivity, ActivityType, AddAssetToWatchlistRequest,
     AssetAttribute, BorrowStatus, CalendarTimezone, CalendarV3Request, CreateLocateRequest,
     CreateWhitelistedAddressRequest, CryptoChain, CryptoTransferDirection, GetAssetsRequest,
@@ -15,7 +15,7 @@ use alpaca_rs::trading::{
     TokenizationRequestType, TradingClient, TransferFeeEstimateRequest, UpdateWatchlistRequest,
     WhitelistStatus,
 };
-use alpaca_rs::{Error, Result};
+use alpaca_rs_client::{Error, Result};
 use rust_decimal::Decimal;
 use serde_json::json;
 use wiremock::matchers::{body_json, body_string, header, method, path, query_param};
@@ -275,7 +275,7 @@ async fn get_assets_sends_attributes_filter_and_parses_new_fields() -> Result<()
     let client = TradingClient::with_base_url(test_credentials(), &server.uri())?;
     let assets = client
         .get_assets(&GetAssetsRequest {
-            status: Some(alpaca_rs::trading::AssetStatus::Active),
+            status: Some(alpaca_rs_client::trading::AssetStatus::Active),
             attributes: Some(vec![
                 AssetAttribute::HasOptions,
                 AssetAttribute::OvernightTradable,
@@ -1246,7 +1246,7 @@ async fn perp_wallet_transfer_posts_body() -> Result<()> {
 
     let client = TradingClient::with_base_url(test_credentials(), &server.uri())?;
     let transfer = client
-        .create_perp_wallet_transfer(&alpaca_rs::trading::CreatePerpTransferRequest {
+        .create_perp_wallet_transfer(&alpaca_rs_client::trading::CreatePerpTransferRequest {
             amount: Decimal::new(25, 1),
             address: "0x42a76C83014e886e639768D84EAF3573b1876844".into(),
             asset: "USDC".into(),

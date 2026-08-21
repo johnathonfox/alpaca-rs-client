@@ -21,9 +21,9 @@
 //! - If a step fails after submission, the test still attempts the cancel
 //!   before returning the error.
 
-use alpaca_rs::rest::Credentials;
-use alpaca_rs::trading::{OrderRequest, OrderSide, OrderStatus, TimeInForce, TradingClient};
-use alpaca_rs::{Error, Result};
+use alpaca_rs_client::rest::Credentials;
+use alpaca_rs_client::trading::{OrderRequest, OrderSide, OrderStatus, TimeInForce, TradingClient};
+use alpaca_rs_client::{Error, Result};
 use rust_decimal::Decimal;
 
 /// Submits a far-from-market limit order, verifies it, cancels it, and

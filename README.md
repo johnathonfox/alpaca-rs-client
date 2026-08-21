@@ -12,6 +12,10 @@ scope, as is the Broker API beyond fixed-income asset discovery.
 
 ## Features
 
+Add it with `cargo add alpaca-rs-client` (the crate is published as
+[`alpaca-rs-client`](https://crates.io/crates/alpaca-rs-client); the library
+name is `alpaca_rs_client`).
+
 - **Trading** (`TradingClient`) — account + configurations, orders (market,
   limit, stop, stop-limit, trailing stop; simple/bracket/OCO/OTO classes, and
   multi-leg option spreads via `OrderClass::Mleg` with up to four `OrderLeg`s),
@@ -54,7 +58,7 @@ scope, as is the Broker API beyond fixed-income asset discovery.
   and resume from the last event id on auto-reconnect.
 - **Resilience** — automatic retry with backoff on HTTP 429 / transient 5xx;
   every client accepts a `base_url` override for testing or proxies.
-- No panics in library code: everything returns `alpaca_rs::Result<T>`.
+- No panics in library code: everything returns `alpaca_rs_client::Result<T>`.
   Trading numbers are `rust_decimal::Decimal` (the API string-encodes them);
   market-data numbers are `f64`.
 
@@ -75,12 +79,12 @@ client reads `APCA_BROKER_API_KEY` / `APCA_BROKER_API_SECRET` via
 ## Quickstart
 
 ```rust,no_run
-use alpaca_rs::data::{BarsRequest, StockHistoricalDataClient, TimeFrame, TimeFrameUnit};
-use alpaca_rs::rest::Credentials;
-use alpaca_rs::trading::TradingClient;
+use alpaca_rs_client::data::{BarsRequest, StockHistoricalDataClient, TimeFrame, TimeFrameUnit};
+use alpaca_rs_client::rest::Credentials;
+use alpaca_rs_client::trading::TradingClient;
 
 #[tokio::main]
-async fn main() -> alpaca_rs::Result<()> {
+async fn main() -> alpaca_rs_client::Result<()> {
     let credentials = Credentials::from_env()?;
 
     // Market data: auto-paginated daily bars.
@@ -105,9 +109,9 @@ latest crypto trade/quote (`cargo run --example crypto_price -- BTC/USD`).
 ## WebSocket streaming
 
 ```rust,no_run
-# async fn demo(credentials: alpaca_rs::rest::Credentials) -> alpaca_rs::Result<()> {
-use alpaca_rs::data::DataFeed;
-use alpaca_rs::stream::{MarketDataStream, Subscription};
+# async fn demo(credentials: alpaca_rs_client::rest::Credentials) -> alpaca_rs_client::Result<()> {
+use alpaca_rs_client::data::DataFeed;
+use alpaca_rs_client::stream::{MarketDataStream, Subscription};
 
 let mut stream = MarketDataStream::stocks(DataFeed::Iex, &credentials).await?;
 stream

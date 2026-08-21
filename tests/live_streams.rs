@@ -23,13 +23,13 @@
 
 use std::time::Duration;
 
-use alpaca_rs::data::DataFeed;
-use alpaca_rs::rest::Credentials;
-use alpaca_rs::stream::{
+use alpaca_rs_client::data::DataFeed;
+use alpaca_rs_client::rest::Credentials;
+use alpaca_rs_client::stream::{
     ActivityEventsClient, ActivityEventsRequest, CorporateActionEventsClient,
     CorporateActionEventsRequest, MarketDataStream, Subscription, TradingStream,
 };
-use alpaca_rs::{Error, Result};
+use alpaca_rs_client::{Error, Result};
 
 /// How long to wait for a live message before accepting silence.
 const MESSAGE_WAIT: Duration = Duration::from_secs(20);

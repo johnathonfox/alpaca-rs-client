@@ -8,16 +8,16 @@
 //! cargo run --example quickstart
 //! ```
 
-use alpaca_rs::data::{BarsRequest, DataFeed, StockHistoricalDataClient, TimeFrame};
-use alpaca_rs::rest::Credentials;
-use alpaca_rs::stream::{DataMessage, MarketDataStream, Subscription};
-use alpaca_rs::trading::TradingClient;
+use alpaca_rs_client::data::{BarsRequest, DataFeed, StockHistoricalDataClient, TimeFrame};
+use alpaca_rs_client::rest::Credentials;
+use alpaca_rs_client::stream::{DataMessage, MarketDataStream, Subscription};
+use alpaca_rs_client::trading::TradingClient;
 use chrono::{Duration, Utc};
 
 const SYMBOL: &str = "AAPL";
 
 #[tokio::main]
-async fn main() -> alpaca_rs::Result<()> {
+async fn main() -> alpaca_rs_client::Result<()> {
     let credentials = match Credentials::from_env() {
         Ok(credentials) => credentials,
         Err(e) => {

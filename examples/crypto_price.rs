@@ -5,11 +5,11 @@
 //! cargo run --example crypto_price -- BTC/USD
 //! ```
 
-use alpaca_rs::data::{CryptoFeed, CryptoHistoricalDataClient, LatestRequest};
-use alpaca_rs::rest::Credentials;
+use alpaca_rs_client::data::{CryptoFeed, CryptoHistoricalDataClient, LatestRequest};
+use alpaca_rs_client::rest::Credentials;
 
 #[tokio::main]
-async fn main() -> alpaca_rs::Result<()> {
+async fn main() -> alpaca_rs_client::Result<()> {
     let symbol = std::env::args()
         .nth(1)
         .unwrap_or_else(|| "BTC/USD".to_string());

@@ -1,7 +1,6 @@
 [package]
 # Published as `alpaca-rs-client` because `alpaca-rs` was already taken on
-# crates.io by an unrelated crate; the library name below keeps
-# `use alpaca_rs::...` working regardless.
+# crates.io by an unrelated crate.
 name = "alpaca-rs-client"
 version = "0.1.0"
 edition = "2024"
@@ -12,7 +11,7 @@ keywords = ["alpaca", "trading", "stocks", "market-data", "finance"]
 categories = ["api-bindings", "finance"]
 
 [lib]
-name = "alpaca_rs"
+name = "alpaca_rs_client"
 
 [dependencies]
 chrono = { version = "0.4.45", features = ["serde"] }

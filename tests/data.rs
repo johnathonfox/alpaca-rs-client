@@ -4,7 +4,7 @@
 //! Hermetic: the server is wiremock on localhost, credentials are dummy
 //! values, and no env vars or live Alpaca endpoints are touched.
 
-use alpaca_rs::data::{
+use alpaca_rs_client::data::{
     AuctionsRequest, BarsRequest, CorporateActionsClient, CorporateActionsRequest, CryptoFeed,
     CryptoHistoricalDataClient, CryptoPerpDataClient, CryptoPerpLatestRequest, DataFeed,
     FixedIncomeDataClient, FixedIncomeLatestQuotesRequest, FixedIncomeLatestRequest, ForexClient,
@@ -13,8 +13,8 @@ use alpaca_rs::data::{
     OptionHistoricalDataClient, OptionsFeed, ScreenerClient, StockHistoricalDataClient, Tape,
     TickType, TimeFrame, TimeFrameUnit,
 };
-use alpaca_rs::rest::Credentials;
-use alpaca_rs::{Error, Result};
+use alpaca_rs_client::rest::Credentials;
+use alpaca_rs_client::{Error, Result};
 use serde_json::json;
 use wiremock::matchers::{header, method, path, query_param, query_param_is_missing};
 use wiremock::{Mock, MockBuilder, MockServer, ResponseTemplate};

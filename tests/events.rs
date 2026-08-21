@@ -4,15 +4,15 @@
 //! Hermetic: the server is wiremock on localhost, credentials are dummy
 //! values, and no env vars or live Alpaca endpoints are touched.
 
-use alpaca_rs::rest::Credentials;
-use alpaca_rs::stream::{
+use alpaca_rs_client::rest::Credentials;
+use alpaca_rs_client::stream::{
     ActivityEventDetails, ActivityEventsClient, ActivityEventsRequest, CorporateActionEventRegion,
     CorporateActionEventType, CorporateActionEventsClient, CorporateActionEventsRequest,
     CorporateActionMutation, CorporateActionPayload, CorporateActionRegionFilter, ReconnectOptions,
     TradeExecutionType,
 };
-use alpaca_rs::trading::ActivityType;
-use alpaca_rs::{Error, Result};
+use alpaca_rs_client::trading::ActivityType;
+use alpaca_rs_client::{Error, Result};
 use wiremock::matchers::{header, method, path, query_param, query_param_is_missing};
 use wiremock::{Mock, MockBuilder, MockServer, ResponseTemplate};
 

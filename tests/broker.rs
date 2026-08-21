@@ -4,11 +4,11 @@
 //! Hermetic: the server is wiremock on localhost, credentials are dummy
 //! values, and no env vars or live Alpaca endpoints are touched.
 
-use alpaca_rs::broker::{
+use alpaca_rs_client::broker::{
     BondStatus, FixedIncomeAssetsClient, TreasurySubtype, UsCorporatesRequest, UsTreasuriesRequest,
 };
-use alpaca_rs::rest::Credentials;
-use alpaca_rs::{Error, Result};
+use alpaca_rs_client::rest::Credentials;
+use alpaca_rs_client::{Error, Result};
 use wiremock::matchers::{header, method, path, query_param};
 use wiremock::{Mock, MockBuilder, MockServer, ResponseTemplate};
 

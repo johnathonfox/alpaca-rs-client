@@ -18,7 +18,7 @@
 //! is pointed at the paper host. Keep it that way — these run against whatever
 //! account the credentials belong to.
 
-use alpaca_rs::data::{
+use alpaca_rs_client::data::{
     BarsRequest, CorporateActionsClient, CryptoFeed, CryptoHistoricalDataClient,
     CryptoPerpDataClient, CryptoPerpLatestRequest, FixedIncomeDataClient,
     FixedIncomeLatestQuotesRequest, FixedIncomeLatestRequest, ForexClient, ForexRatesRequest,
@@ -26,13 +26,13 @@ use alpaca_rs::data::{
     MostActivesBy, MostActivesRequest, NewsClient, NewsRequest, OptionHistoricalDataClient,
     ScreenerClient, StockHistoricalDataClient, TimeFrame, TimeFrameUnit,
 };
-use alpaca_rs::rest::Credentials;
-use alpaca_rs::trading::{
+use alpaca_rs_client::rest::Credentials;
+use alpaca_rs_client::trading::{
     AccountActivitiesRequest, CalendarRequest, GetAssetsRequest, GetOrdersRequest,
     GetTokenizationRequestsRequest, GetWalletsRequest, Market, OptionContractsRequest,
     PortfolioHistoryRequest, TradingClient,
 };
-use alpaca_rs::{Error, Result};
+use alpaca_rs_client::{Error, Result};
 use chrono::{Duration, Utc};
 
 /// Skips the test (rather than failing) when credentials are absent, so a
@@ -103,12 +103,14 @@ async fn trading_read_only_sweep() -> Result<()> {
             // The endpoint requires `ca_types`, `since` and `until`.
             let today = Utc::now().date_naive();
             let announcements = client
-                .get_corporate_action_announcements(&alpaca_rs::trading::CorporateActionsRequest {
-                    ca_types: Some("dividend".into()),
-                    since: Some(today - Duration::days(14)),
-                    until: Some(today),
-                    ..Default::default()
-                })
+                .get_corporate_action_announcements(
+                    &alpaca_rs_client::trading::CorporateActionsRequest {
+                        ca_types: Some("dividend".into()),
+                        since: Some(today - Duration::days(14)),
+                        until: Some(today),
+                        ..Default::default()
+                    },
+                )
                 .await?;
             println!("           {} announcements", announcements.len());
             Ok(())
@@ -439,7 +441,7 @@ async fn market_data_read_only_sweep() -> Result<()> {
         "corporate_actions (data)",
         async {
             let actions = CorporateActionsClient::new(credentials.clone())?
-                .corporate_actions(&alpaca_rs::data::CorporateActionsRequest {
+                .corporate_actions(&alpaca_rs_client::data::CorporateActionsRequest {
                     start: Some((Utc::now() - Duration::days(14)).date_naive()),
                     ..Default::default()
                 })

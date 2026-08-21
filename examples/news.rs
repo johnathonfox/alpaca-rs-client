@@ -5,12 +5,12 @@
 //! cargo run --example news -- SOXL
 //! ```
 
-use alpaca_rs::data::{NewsClient, NewsRequest, Sort};
-use alpaca_rs::rest::Credentials;
+use alpaca_rs_client::data::{NewsClient, NewsRequest, Sort};
+use alpaca_rs_client::rest::Credentials;
 use chrono::{Duration, Utc};
 
 #[tokio::main]
-async fn main() -> alpaca_rs::Result<()> {
+async fn main() -> alpaca_rs_client::Result<()> {
     let symbol = std::env::args()
         .nth(1)
         .unwrap_or_else(|| "SOXL".to_string());
