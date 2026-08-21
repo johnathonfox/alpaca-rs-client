@@ -29,3 +29,6 @@ target
 .env
 .env.*
 !.env.example
+
+# dependency-mcp tooling cache
+.dependency-cache/

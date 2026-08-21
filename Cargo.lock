@@ -23,7 +23,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "alpaca-rs"
+name = "alpaca-client-rs"
 version = "0.1.0"
 dependencies = [
  "chrono",
