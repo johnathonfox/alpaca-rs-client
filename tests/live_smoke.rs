@@ -13,18 +13,22 @@
 //!
 //! **Every call here is read-only.** No order is submitted, replaced or
 //! canceled; no position is closed, exercised or marked do-not-exercise; no
-//! watchlist or locate is created. The trading client is pointed at the
-//! paper host. Keep it that way — these run against whatever account the
-//! credentials belong to.
+//! watchlist or locate is created; no wallet transfer, whitelisted address or
+//! tokenization mint is initiated; no leverage is changed. The trading client
+//! is pointed at the paper host. Keep it that way — these run against whatever
+//! account the credentials belong to.
 
 use alpaca_rs::data::{
-    BarsRequest, CorporateActionsClient, ForexClient, ForexRatesRequest, LatestForexRatesRequest,
-    LatestRequest, MarketMoversRequest, MarketType, MostActivesBy, MostActivesRequest, NewsClient,
-    NewsRequest, ScreenerClient, StockHistoricalDataClient, TimeFrame, TimeFrameUnit,
+    BarsRequest, CorporateActionsClient, CryptoPerpDataClient, CryptoPerpLatestRequest,
+    FixedIncomeDataClient, FixedIncomeLatestQuotesRequest, FixedIncomeLatestRequest, ForexClient,
+    ForexRatesRequest, LatestForexRatesRequest, LatestRequest, MarketMoversRequest, MarketType,
+    MostActivesBy, MostActivesRequest, NewsClient, NewsRequest, ScreenerClient,
+    StockHistoricalDataClient, TimeFrame, TimeFrameUnit,
 };
 use alpaca_rs::rest::Credentials;
 use alpaca_rs::trading::{
-    AccountActivitiesRequest, GetAssetsRequest, GetOrdersRequest, Market, TradingClient,
+    AccountActivitiesRequest, GetAssetsRequest, GetOrdersRequest, GetTokenizationRequestsRequest,
+    GetWalletsRequest, Market, TradingClient,
 };
 use alpaca_rs::{Error, Result};
 
@@ -122,6 +126,77 @@ async fn trading_read_only_sweep() -> Result<()> {
         async {
             let quotes = client.get_locate_quotes(&["AAPL".to_string()]).await?;
             println!("           locate quotes parsed: {quotes:?}");
+            Ok(())
+        }
+        .await,
+    );
+
+    // Sprint 15: crypto wallets/funding need Alpaca enablement.
+    tolerate(
+        "get_wallets",
+        async {
+            let wallets = client.get_wallets(&GetWalletsRequest::default()).await?;
+            println!("           wallets: {}", wallets.len());
+            Ok(())
+        }
+        .await,
+    );
+    tolerate(
+        "get_wallet_transfers",
+        async {
+            let transfers = client.get_wallet_transfers().await?;
+            println!("           transfers: {}", transfers.len());
+            Ok(())
+        }
+        .await,
+    );
+    tolerate(
+        "get_whitelisted_addresses",
+        async {
+            let whitelists = client.get_whitelisted_addresses().await?;
+            println!("           whitelisted addresses: {}", whitelists.len());
+            Ok(())
+        }
+        .await,
+    );
+
+    // Sprint 16: perpetuals are beta and geo-restricted.
+    tolerate(
+        "get_perp_wallets",
+        async {
+            let wallets = client.get_perp_wallets(None).await?;
+            println!("           perp wallets: {}", wallets.len());
+            Ok(())
+        }
+        .await,
+    );
+    tolerate(
+        "get_perp_account_vitals",
+        async {
+            let vitals = client.get_perp_account_vitals().await?;
+            println!("           perp vitals parsed: {vitals:?}");
+            Ok(())
+        }
+        .await,
+    );
+    tolerate(
+        "get_perp_leverage",
+        async {
+            let leverage = client.get_perp_leverage("BTC-PERP").await?;
+            println!("           perp leverage parsed: {leverage:?}");
+            Ok(())
+        }
+        .await,
+    );
+
+    // Sprint 17: tokenization requires Authorized Participant status.
+    tolerate(
+        "get_tokenization_requests",
+        async {
+            let requests = client
+                .get_tokenization_requests(&GetTokenizationRequestsRequest::default())
+                .await?;
+            println!("           tokenization requests: {}", requests.len());
             Ok(())
         }
         .await,
@@ -231,6 +306,44 @@ async fn market_data_read_only_sweep() -> Result<()> {
         async {
             let rates = forex.rates(&ForexRatesRequest::new(["EURUSD"])).await?;
             println!("           historical fx parsed ok ({rates:?})");
+            Ok(())
+        }
+        .await,
+    );
+
+    // Sprint 18: fixed income and crypto perp market data (beta).
+    let fixed_income = FixedIncomeDataClient::new(credentials.clone())?;
+    tolerate(
+        "fixed_income.latest_prices",
+        async {
+            let prices = fixed_income
+                .latest_prices(&FixedIncomeLatestRequest::new(["US912797KJ59"])?)
+                .await?;
+            println!("           fi prices parsed: {} isins", prices.prices.len());
+            Ok(())
+        }
+        .await,
+    );
+    tolerate(
+        "fixed_income.latest_quotes",
+        async {
+            let quotes = fixed_income
+                .latest_quotes(&FixedIncomeLatestQuotesRequest::new(["US912797SX61"])?)
+                .await?;
+            println!("           fi quotes parsed: {} isins", quotes.quotes.len());
+            Ok(())
+        }
+        .await,
+    );
+
+    let perps = CryptoPerpDataClient::new(credentials.clone())?;
+    tolerate(
+        "crypto_perp.latest_pricing",
+        async {
+            let pricing = perps
+                .latest_pricing(&CryptoPerpLatestRequest::new(["BTC-PERP"]))
+                .await?;
+            println!("           perp pricing parsed: {pricing:?}");
             Ok(())
         }
         .await,
