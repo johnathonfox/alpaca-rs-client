@@ -96,3 +96,20 @@ pass cleanly.
 - Do not commit, push, or otherwise mutate git history unless the user
   explicitly asks.
 - Commit messages: short imperative summary (e.g. `Add market data client`).
+
+## Agent skills
+
+### Issue tracker
+
+Issues are tracked as GitHub issues on `johnathonfox/alpaca-rs-client` via the
+`gh` CLI. See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+Default vocabulary: `needs-triage`, `needs-info`, `ready-for-agent`,
+`ready-for-human`, `wontfix`. See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Single-context: `CONTEXT.md` at the repo root plus `docs/adr/` (three ADRs
+exist). See `docs/agents/domain.md`.
