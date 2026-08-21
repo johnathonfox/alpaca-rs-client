@@ -1,6 +1,10 @@
 name: Dependabot auto-merge
 
-# Approves and squash-merges Dependabot PRs once CI passes on them.
+# Approves and squash-merges Dependabot PRs once CI passes on them, but only
+# for non-breaking bumps: semver patch/minor, with Cargo's 0.x semantics (a
+# 0.x minor bump counts as breaking). Breaking bumps get a comment and wait
+# for a human.
+#
 # `workflow_run` is used instead of `pull_request` so the gate is the
 # completed CI result, and so the job runs with a write-capable token even
 # for Dependabot PRs (which get read-only tokens under `pull_request`).
@@ -15,21 +19,46 @@ permissions:
 
 jobs:
   auto-merge:
-    name: approve and merge on green CI
+    name: approve and merge non-breaking bumps on green CI
     runs-on: ubuntu-latest
     if: >-
       github.event.workflow_run.event == 'pull_request' &&
       github.event.workflow_run.conclusion == 'success' &&
       github.event.workflow_run.actor.login == 'dependabot[bot]'
     steps:
-      - name: Approve and squash-merge
+      - name: Approve and squash-merge non-breaking bumps
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.workflow_run.pull_requests[0].number }}
         run: |
-          pr_url="${{ github.event.workflow_run.pull_requests[0].html_url }}"
-          if [ -z "$pr_url" ]; then
+          if [ -z "$PR_NUMBER" ]; then
             echo "no pull request associated with this CI run; skipping"
             exit 0
           fi
-          gh pr review "$pr_url" --approve
-          gh pr merge "$pr_url" --squash --auto
+
+          title=$(gh pr view "$PR_NUMBER" --json title --jq .title)
+          if python3 - "$title" <<'EOF'
+          import re, sys
+
+          m = re.search(r"from ([0-9][0-9a-zA-Z.\-]*) to ([0-9][0-9a-zA-Z.\-]*)", sys.argv[1])
+          if not m:
+              # Security/grouped updates do not match; leave them to a human.
+              sys.exit(1)
+
+          def parts(v):
+              nums = [int(x) for x in re.findall(r"\d+", v)[:3]]
+              return nums + [0] * (3 - len(nums))
+
+          old, new = parts(m.group(1)), parts(m.group(2))
+          # Cargo semver semantics: for 0.x, a minor bump is breaking.
+          breaking = old[0] != new[0] or (old[0] == 0 and old[1] != new[1])
+          sys.exit(1 if breaking else 0)
+          EOF
+          then
+            echo "non-breaking bump: $title"
+            gh pr review "$PR_NUMBER" --approve
+            gh pr merge "$PR_NUMBER" --squash --auto
+          else
+            echo "breaking or unparseable bump: $title"
+            gh pr comment "$PR_NUMBER" --body "CI is green, but this looks like a breaking version bump (semver-major, or a 0.x minor bump under Cargo semantics), so auto-merge skipped it. Review and merge manually."
+          fi

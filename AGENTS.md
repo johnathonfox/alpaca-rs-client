@@ -70,7 +70,8 @@ pass cleanly.
   `APCA_API_KEY_ID` / `APCA_API_SECRET_KEY` secrets; paper keys).
 - Dependabot (`.github/dependabot.yml`) — weekly Cargo and GitHub Actions
   dependency PRs; `dependabot-auto-merge.yml` approves and squash-merges them
-  once CI passes.
+  once CI passes, but only for non-breaking bumps (semver patch/minor, with
+  Cargo 0.x semantics); breaking bumps get a comment and wait for a human.
 
 ## Conventions
 
