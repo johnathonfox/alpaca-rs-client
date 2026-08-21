@@ -2,9 +2,13 @@
 //!
 //! This stream uses the legacy envelope shape (`{"stream": .., "data": ..}`),
 //! unlike the market data streams which use JSON arrays. Protocol: connect,
-//! `{"action":"auth","key":..,"secret":..}`, expect
+//! then immediately send `{"action":"auth","key":..,"secret":..}` — the
+//! server waits for the client and sends no greeting first. Expect
 //! `{"stream":"authorization","data":{"status":"authorized"}}`, then
 //! `{"action":"listen","data":{"streams":["trade_updates"]}}`.
+//!
+//! Frame shape differs by environment (observed live): paper sends JSON as
+//! **binary** frames, live as text frames; both are accepted.
 //!
 //! Auto-reconnect is opt-in: by default callers should reconnect when
 //! [`TradingStream::next`] returns an error or `Ok(None)`. With
@@ -105,15 +109,17 @@ async fn send_json(ws: &mut Ws, value: &impl Serialize) -> Result<()> {
     Ok(())
 }
 
-/// Reads the next text message as raw JSON.
+/// Reads the next text or binary message as raw JSON. Paper sends JSON as
+/// binary frames (observed live), so both shapes are decoded.
 async fn read_json(ws: &mut Ws) -> Result<serde_json::Value> {
     loop {
         match ws.next().await {
             None => return Err(Error::StreamClosed),
             Some(Err(e)) => return Err(Error::WebSocket(e)),
             Some(Ok(Message::Text(text))) => return Ok(serde_json::from_str(text.as_str())?),
+            Some(Ok(Message::Binary(bytes))) => return Ok(serde_json::from_slice(&bytes)?),
             Some(Ok(Message::Close(_))) => return Err(Error::StreamClosed),
-            // Ping/Pong handled by tungstenite; skip binary/frame messages.
+            // Ping/Pong handled by tungstenite; skip other frame types.
             Some(Ok(_)) => continue,
         }
     }
@@ -152,9 +158,9 @@ impl TradingStream {
         );
         let (mut ws, _response) = connect_async(request).await?;
 
-        // First message: {"stream":"connection","data":{"status":"connected"}}
-        let _ = read_json(&mut ws).await?;
-
+        // The server waits for the client and sends no greeting; auth must
+        // be the first message (observed live: waiting for a greeting first
+        // deadlocks until the server resets the connection).
         let (key, secret) = creds.key_secret();
         send_json(
             &mut ws,
@@ -162,9 +168,16 @@ impl TradingStream {
         )
         .await?;
 
-        let reply = read_json(&mut ws).await?;
-        let authorized = reply.get("stream").and_then(|s| s.as_str()) == Some("authorization")
-            && reply.pointer("/data/status").and_then(|s| s.as_str()) == Some("authorized");
+        // Read until the authorization reply arrives, tolerating any other
+        // control messages that may precede it.
+        let reply = loop {
+            let message = read_json(&mut ws).await?;
+            if message.get("stream").and_then(|s| s.as_str()) == Some("authorization") {
+                break message;
+            }
+        };
+        let authorized =
+            reply.pointer("/data/status").and_then(|s| s.as_str()) == Some("authorized");
         if !authorized {
             return Err(Error::Stream(format!(
                 "unexpected authorization reply: {reply}"
@@ -258,29 +271,36 @@ impl TradingStream {
         }
     }
 
-    /// Reads the next text frame and parses it into a stream event.
+    /// Reads the next text or binary frame and parses it into a stream event.
     async fn read_event(ws: &mut Ws) -> Result<Option<StreamEvent>> {
         loop {
             match ws.next().await {
                 None => return Ok(None),
                 Some(Err(e)) => return Err(Error::WebSocket(e)),
                 Some(Ok(Message::Text(text))) => {
-                    let value: serde_json::Value = serde_json::from_str(text.as_str())?;
-                    if value.get("stream").and_then(|s| s.as_str()) == Some("trade_updates") {
-                        let data = value
-                            .get("data")
-                            .cloned()
-                            .unwrap_or(serde_json::Value::Null);
-                        let update: TradeUpdate = serde_json::from_value(data)?;
-                        return Ok(Some(StreamEvent::TradeUpdate(Box::new(update))));
-                    }
-                    return Ok(Some(StreamEvent::Other(value)));
+                    return Self::parse_event(serde_json::from_str(text.as_str())?);
+                }
+                Some(Ok(Message::Binary(bytes))) => {
+                    return Self::parse_event(serde_json::from_slice(&bytes)?);
                 }
                 Some(Ok(Message::Close(_))) => return Ok(None),
-                // Ping/Pong handled by tungstenite; skip binary/frame messages.
+                // Ping/Pong handled by tungstenite; skip other frame types.
                 Some(Ok(_)) => continue,
             }
         }
+    }
+
+    /// Maps a parsed JSON message onto the corresponding stream event.
+    fn parse_event(value: serde_json::Value) -> Result<Option<StreamEvent>> {
+        if value.get("stream").and_then(|s| s.as_str()) == Some("trade_updates") {
+            let data = value
+                .get("data")
+                .cloned()
+                .unwrap_or(serde_json::Value::Null);
+            let update: TradeUpdate = serde_json::from_value(data)?;
+            return Ok(Some(StreamEvent::TradeUpdate(Box::new(update))));
+        }
+        Ok(Some(StreamEvent::Other(value)))
     }
 }
 

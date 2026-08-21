@@ -66,11 +66,30 @@ pub struct Quote {
     #[serde(rename = "as")]
     pub ask_size: f64,
     /// Quote condition codes.
-    #[serde(rename = "c", default)]
+    #[serde(rename = "c", default, deserialize_with = "string_or_seq")]
     pub conditions: Vec<String>,
     /// Tape.
     #[serde(rename = "z")]
     pub tape: Option<String>,
+}
+
+/// Deserializes condition codes: the stock feed sends `c` as an array of
+/// strings, the options feed sends a single string (observed live: `"c":"f"`
+/// on trades, `"c":" "` on quotes).
+fn string_or_seq<'de, D>(deserializer: D) -> std::result::Result<Vec<String>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum StringOrSeq {
+        One(String),
+        Many(Vec<String>),
+    }
+    Ok(match StringOrSeq::deserialize(deserializer)? {
+        StringOrSeq::One(one) => vec![one],
+        StringOrSeq::Many(many) => many,
+    })
 }
 
 /// A trade id: numeric for stocks/options, string for crypto.
@@ -102,7 +121,7 @@ pub struct Trade {
     #[serde(rename = "i")]
     pub id: Option<TradeId>,
     /// Trade condition codes.
-    #[serde(rename = "c", default)]
+    #[serde(rename = "c", default, deserialize_with = "string_or_seq")]
     pub conditions: Vec<String>,
     /// Tape.
     #[serde(rename = "z")]
@@ -1175,6 +1194,41 @@ pub struct CryptoPerpLatestPricingResponse {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn deserialize_trade_with_string_conditions() {
+        // Observed live on the options feed: `c` is a single string, not an
+        // array (`{"c":"f",...}`).
+        let json = r#"{
+            "c": "f", "p": 205.23, "s": 1,
+            "t": "2026-08-20T18:22:45.322987383Z", "x": "D"
+        }"#;
+        let trade: Trade = serde_json::from_str(json).unwrap();
+        assert_eq!(trade.conditions, vec!["f"]);
+        assert_eq!(trade.price, 205.23);
+    }
+
+    #[test]
+    fn deserialize_quote_with_string_conditions() {
+        // Observed live on the options feed: quotes carry `"c":" "`.
+        let json = r#"{
+            "ap": 202.45, "as": 25, "ax": "C", "bp": 199.4, "bs": 49,
+            "bx": "X", "c": " ", "t": "2026-08-20T19:59:59.886779172Z"
+        }"#;
+        let quote: Quote = serde_json::from_str(json).unwrap();
+        assert_eq!(quote.conditions, vec![" "]);
+    }
+
+    #[test]
+    fn deserialize_trade_with_array_conditions() {
+        // Stock feeds send `c` as an array; both shapes must parse.
+        let json = r#"{
+            "c": ["@", "T"], "p": 312.1, "s": 50,
+            "t": "2026-08-20T23:59:51.567955747Z", "x": "D"
+        }"#;
+        let trade: Trade = serde_json::from_str(json).unwrap();
+        assert_eq!(trade.conditions, vec!["@", "T"]);
+    }
 
     #[test]
     fn deserialize_bars_response() {

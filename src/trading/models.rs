@@ -86,10 +86,11 @@ pub struct Account {
 /// Account configuration settings.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AccountConfigurations {
-    /// Day trade buying power check.
-    pub dtbp_check: DTBPCheck,
+    /// Day trade buying power check. Not returned for all accounts (observed
+    /// live: absent on accounts without day-trading margin).
+    pub dtbp_check: Option<DTBPCheck>,
     /// Trade confirmation email setting.
-    pub trade_confirm_email: TradeConfirmationEmail,
+    pub trade_confirm_email: Option<TradeConfirmationEmail>,
     /// Whether trading is suspended.
     pub suspend_trade: bool,
     /// Whether shorting is disabled.
@@ -97,11 +98,20 @@ pub struct AccountConfigurations {
     /// Whether fractional trading is enabled.
     pub fractional_trading: bool,
     /// Maximum margin multiplier (e.g. `"4"`).
-    pub max_margin_multiplier: String,
-    /// Pattern day trader check.
-    pub pdt_check: PDTCheck,
+    pub max_margin_multiplier: Option<String>,
+    /// Pattern day trader check. Not returned for all accounts.
+    pub pdt_check: Option<PDTCheck>,
     /// Maximum approved options trading level.
     pub max_options_trading_level: Option<u32>,
+    /// Whether the account is restricted to closing transactions only.
+    #[serde(default)]
+    pub closing_transactions_only: Option<bool>,
+    /// Whether overnight trading is disabled.
+    #[serde(default)]
+    pub disable_overnight_trading: Option<bool>,
+    /// Whether PTP no-exception entries are accepted.
+    #[serde(default)]
+    pub ptp_no_exception_entry: Option<bool>,
 }
 
 /// Deserializes an optional value where the API emits `""` instead of `null`
@@ -1020,6 +1030,28 @@ pub struct TokenizationRequest {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn deserialize_account_configurations_without_dtbp_check() {
+        // Observed live: accounts without day-trading margin get no
+        // `dtbp_check`/`pdt_check`/`max_options_trading_level` fields at all.
+        let json = r#"{
+            "closing_transactions_only": false,
+            "disable_overnight_trading": false,
+            "fractional_trading": true,
+            "max_margin_multiplier": "4",
+            "no_shorting": false,
+            "ptp_no_exception_entry": false,
+            "suspend_trade": false,
+            "trade_confirm_email": "all"
+        }"#;
+        let config: AccountConfigurations = serde_json::from_str(json).unwrap();
+        assert_eq!(config.dtbp_check, None);
+        assert_eq!(config.pdt_check, None);
+        assert_eq!(config.max_options_trading_level, None);
+        assert_eq!(config.closing_transactions_only, Some(false));
+        assert!(config.fractional_trading);
+    }
 
     #[test]
     fn deserialize_order() {
