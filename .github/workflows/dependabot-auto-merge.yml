@@ -1,0 +1,35 @@
+name: Dependabot auto-merge
+
+# Approves and squash-merges Dependabot PRs once CI passes on them.
+# `workflow_run` is used instead of `pull_request` so the gate is the
+# completed CI result, and so the job runs with a write-capable token even
+# for Dependabot PRs (which get read-only tokens under `pull_request`).
+on:
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
+
+permissions:
+  pull-requests: write
+  contents: write
+
+jobs:
+  auto-merge:
+    name: approve and merge on green CI
+    runs-on: ubuntu-latest
+    if: >-
+      github.event.workflow_run.event == 'pull_request' &&
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.actor.login == 'dependabot[bot]'
+    steps:
+      - name: Approve and squash-merge
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          pr_url="${{ github.event.workflow_run.pull_requests[0].html_url }}"
+          if [ -z "$pr_url" ]; then
+            echo "no pull request associated with this CI run; skipping"
+            exit 0
+          fi
+          gh pr review "$pr_url" --approve
+          gh pr merge "$pr_url" --squash --auto
