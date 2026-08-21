@@ -1,8 +1,8 @@
 [package]
-# Published as `alpaca-client-rs` because `alpaca-rs` was already taken on
+# Published as `alpaca-rs-client` because `alpaca-rs` was already taken on
 # crates.io by an unrelated crate; the library name below keeps
 # `use alpaca_rs::...` working regardless.
-name = "alpaca-client-rs"
+name = "alpaca-rs-client"
 version = "0.1.0"
 edition = "2024"
 description = "Async Rust client for the Alpaca trading and market data APIs (REST + WebSocket), with alpaca-py parity"
