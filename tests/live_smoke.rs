@@ -19,18 +19,21 @@
 //! account the credentials belong to.
 
 use alpaca_rs::data::{
-    BarsRequest, CorporateActionsClient, CryptoPerpDataClient, CryptoPerpLatestRequest,
-    FixedIncomeDataClient, FixedIncomeLatestQuotesRequest, FixedIncomeLatestRequest, ForexClient,
-    ForexRatesRequest, LatestForexRatesRequest, LatestRequest, MarketMoversRequest, MarketType,
-    MostActivesBy, MostActivesRequest, NewsClient, NewsRequest, ScreenerClient,
-    StockHistoricalDataClient, TimeFrame, TimeFrameUnit,
+    BarsRequest, CorporateActionsClient, CryptoFeed, CryptoHistoricalDataClient,
+    CryptoPerpDataClient, CryptoPerpLatestRequest, FixedIncomeDataClient,
+    FixedIncomeLatestQuotesRequest, FixedIncomeLatestRequest, ForexClient, ForexRatesRequest,
+    LatestForexRatesRequest, LatestRequest, LogoClient, MarketMoversRequest, MarketType,
+    MostActivesBy, MostActivesRequest, NewsClient, NewsRequest, OptionHistoricalDataClient,
+    ScreenerClient, StockHistoricalDataClient, TimeFrame, TimeFrameUnit,
 };
 use alpaca_rs::rest::Credentials;
 use alpaca_rs::trading::{
-    AccountActivitiesRequest, GetAssetsRequest, GetOrdersRequest, GetTokenizationRequestsRequest,
-    GetWalletsRequest, Market, TradingClient,
+    AccountActivitiesRequest, CalendarRequest, GetAssetsRequest, GetOrdersRequest,
+    GetTokenizationRequestsRequest, GetWalletsRequest, Market, OptionContractsRequest,
+    PortfolioHistoryRequest, TradingClient,
 };
 use alpaca_rs::{Error, Result};
+use chrono::{Duration, Utc};
 
 /// Skips the test (rather than failing) when credentials are absent, so a
 /// plain `cargo test -- --ignored` on a machine without keys stays green.
@@ -70,6 +73,66 @@ async fn trading_read_only_sweep() -> Result<()> {
 
     let account = client.get_account().await?;
     println!("  ok       get_account — currency {:?}", account.currency);
+
+    let configurations = client.get_account_configurations().await?;
+    println!(
+        "  ok       get_account_configurations — max options level {:?}",
+        configurations.max_options_trading_level
+    );
+
+    let history = client
+        .get_portfolio_history(&PortfolioHistoryRequest::default())
+        .await?;
+    println!(
+        "  ok       get_portfolio_history — {} points",
+        history.timestamp.len()
+    );
+
+    let calendar = client.get_calendar(&CalendarRequest::default()).await?;
+    println!("  ok       get_calendar — {} days", calendar.len());
+
+    let watchlists = client.get_watchlists().await?;
+    println!(
+        "  ok       get_watchlists — {} watchlists",
+        watchlists.len()
+    );
+
+    tolerate(
+        "get_corporate_action_announcements",
+        async {
+            // The endpoint requires `ca_types`, `since` and `until`.
+            let today = Utc::now().date_naive();
+            let announcements = client
+                .get_corporate_action_announcements(&alpaca_rs::trading::CorporateActionsRequest {
+                    ca_types: Some("dividend".into()),
+                    since: Some(today - Duration::days(14)),
+                    until: Some(today),
+                    ..Default::default()
+                })
+                .await?;
+            println!("           {} announcements", announcements.len());
+            Ok(())
+        }
+        .await,
+    );
+
+    tolerate(
+        "get_option_contracts",
+        async {
+            let contracts = client
+                .get_option_contracts(&OptionContractsRequest {
+                    underlying_symbols: Some("AAPL".into()),
+                    ..Default::default()
+                })
+                .await?;
+            println!(
+                "           {} AAPL contracts",
+                contracts.option_contracts.len()
+            );
+            Ok(())
+        }
+        .await,
+    );
 
     let clock = client.get_clock().await?;
     println!("  ok       get_clock — is_open {}", clock.is_open);
@@ -306,6 +369,82 @@ async fn market_data_read_only_sweep() -> Result<()> {
         async {
             let rates = forex.rates(&ForexRatesRequest::new(["EURUSD"])).await?;
             println!("           historical fx parsed ok ({rates:?})");
+            Ok(())
+        }
+        .await,
+    );
+
+    // Crypto market data (latest trades/quotes are also exercised by
+    // examples/crypto_price.rs).
+    let crypto = CryptoHistoricalDataClient::new(credentials.clone(), CryptoFeed::Us)?;
+    let crypto_bars = crypto
+        .bars(&BarsRequest::new(
+            ["BTC/USD"],
+            TimeFrame::new(1, TimeFrameUnit::Day)?,
+        ))
+        .await?;
+    println!(
+        "  ok       crypto bars — {} BTC/USD bars",
+        crypto_bars.bars.get("BTC/USD").map(Vec::len).unwrap_or(0)
+    );
+
+    // Options data: discover an active AAPL contract via the trading API,
+    // then exercise the options data client on it. Options market data needs
+    // a feed entitlement, so tolerate a 403.
+    tolerate(
+        "options latest_trades",
+        async {
+            let trading = TradingClient::new(credentials.clone(), true)?;
+            let contracts = trading
+                .get_option_contracts(&OptionContractsRequest {
+                    underlying_symbols: Some("AAPL".into()),
+                    ..Default::default()
+                })
+                .await?;
+            let Some(contract) = contracts.option_contracts.first() else {
+                println!("           no AAPL contracts returned");
+                return Ok(());
+            };
+            let options = OptionHistoricalDataClient::new(credentials.clone())?;
+            let trades = options
+                .latest_trades(&LatestRequest::new([contract.symbol.as_str()]), None)
+                .await?;
+            println!(
+                "           {} — {} latest trade(s)",
+                contract.symbol,
+                trades.trades.len()
+            );
+            Ok(())
+        }
+        .await,
+    );
+
+    let logos = LogoClient::new(credentials.clone())?;
+    tolerate(
+        "logo(AAPL)",
+        async {
+            let logo = logos.logo("AAPL").await?;
+            println!(
+                "           {} bytes, content-type {:?}",
+                logo.bytes.len(),
+                logo.content_type
+            );
+            Ok(())
+        }
+        .await,
+    );
+
+    // Corporate actions data (bounded window — the endpoint auto-paginates).
+    tolerate(
+        "corporate_actions (data)",
+        async {
+            let actions = CorporateActionsClient::new(credentials.clone())?
+                .corporate_actions(&alpaca_rs::data::CorporateActionsRequest {
+                    start: Some((Utc::now() - Duration::days(14)).date_naive()),
+                    ..Default::default()
+                })
+                .await?;
+            println!("           parsed: {:?}", actions.next_page_token);
             Ok(())
         }
         .await,
