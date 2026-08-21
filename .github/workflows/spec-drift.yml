@@ -1,0 +1,89 @@
+name: Spec drift
+
+# ADR 0002/0003: the crate's scope is governed by diffs against Alpaca's
+# OpenAPI specs, pinned in docs/specs/. This job re-downloads the upstream
+# specs weekly (source: the official alpaca-trade-api-js repo, which mirrors
+# the specs behind docs.alpaca.markets) and opens an issue when they drift —
+# new or changed endpoints are candidates for implementation.
+on:
+  schedule:
+    - cron: "23 5 * * 1" # Mondays 05:23 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  drift:
+    name: diff upstream specs against docs/specs
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download upstream specs
+        run: |
+          mkdir -p /tmp/upstream
+          base=https://raw.githubusercontent.com/alpacahq/alpaca-trade-api-js/master/tooling/specs
+          curl -sf "$base/trading-api.json" -o /tmp/upstream/js-repo-trading-api.json
+          curl -sf "$base/market-data-api.json" -o /tmp/upstream/js-repo-market-data-api.json
+
+      - name: Diff against pinned specs
+        id: diff
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          python3 - <<'EOF' > /tmp/drift.md
+          import json
+
+          def load(path):
+              with open(path) as f:
+                  return json.load(f)
+
+          drift = False
+          for name in ("js-repo-trading-api", "js-repo-market-data-api"):
+              old = load(f"docs/specs/{name}.json")
+              new = load(f"/tmp/upstream/{name}.json")
+              old_paths = set(old.get("paths", {}))
+              new_paths = set(new.get("paths", {}))
+              added = sorted(new_paths - old_paths)
+              removed = sorted(old_paths - new_paths)
+              changed = sorted(
+                  p for p in old_paths & new_paths
+                  if old["paths"][p] != new["paths"][p]
+              )
+              print(f"## {name}: {old['info'].get('version')} -> {new['info'].get('version')}")
+              if not (added or removed or changed):
+                  print("\nNo drift.\n")
+                  continue
+              drift = True
+              for label, items in (("Added", added), ("Removed", removed), ("Changed", changed)):
+                  if items:
+                      print(f"\n**{label} ({len(items)}):**")
+                      for p in items:
+                          print(f"- `{p}`")
+              print()
+
+          with open("/tmp/drift.flag", "w") as f:
+              f.write("yes" if drift else "no")
+          EOF
+          cat /tmp/drift.md >> "$GITHUB_STEP_SUMMARY"
+          echo "drift=$(cat /tmp/drift.flag)" >> "$GITHUB_OUTPUT"
+
+      - name: Open issue on drift
+        if: steps.diff.outputs.drift == 'yes'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if gh issue list --state open --search "Alpaca OpenAPI drift" --json number --jq 'length' | grep -q '^0$'; then
+            gh issue create \
+              --title "Alpaca OpenAPI drift detected" \
+              --label "spec-drift" \
+              --body-file /tmp/drift.md \
+              --body "$(cat /tmp/drift.md)
+
+          ---
+          Pinned specs live in \`docs/specs/\` (see its README for the audit workflow). Detected by the spec-drift workflow on $(date -u +%Y-%m-%d)."
+          else
+            echo "open drift issue already exists; not creating a duplicate"
+          fi

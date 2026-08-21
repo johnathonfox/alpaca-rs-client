@@ -57,6 +57,20 @@ market-data numbers are plain `f64`), tracing. Dev-only: wiremock.
 Run `cargo fmt` and `cargo clippy` before considering any change done; both must
 pass cleanly.
 
+## Automation (`.github/workflows/`)
+
+- `ci.yml` — fmt/clippy/test/doc on push and PR (offline; no credentials).
+- `release.yml` — pushing a `vX.Y.Z` tag runs the full CI gate, then
+  `cargo publish` (needs the `CARGO_REGISTRY_TOKEN` secret) and creates a
+  GitHub Release. The tag must match the Cargo.toml version.
+- `audit.yml` — `cargo audit` on dependency changes and weekly.
+- `spec-drift.yml` — weekly diff of Alpaca's upstream OpenAPI specs (JS-repo
+  mirror) against `docs/specs/js-repo-*.json`; opens an issue on drift.
+- `live.yml` — manual-only run of the live test suites (needs the
+  `APCA_API_KEY_ID` / `APCA_API_SECRET_KEY` secrets; paper keys).
+- Dependabot (`.github/dependabot.yml`) — weekly Cargo and GitHub Actions
+  dependency PRs.
+
 ## Conventions
 
 - Keep the crate dependency-light. Confirm a crate is genuinely needed before

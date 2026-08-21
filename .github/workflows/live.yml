@@ -1,0 +1,33 @@
+name: Live verification
+
+# Manual trigger only: runs the ignored live test suites against a real
+# (paper) Alpaca account — the REST sweeps, the WS/SSE stream checks, and the
+# order submit/cancel round-trip. Requires the APCA_API_KEY_ID and
+# APCA_API_SECRET_KEY repository secrets (paper keys). Without them the tests
+# skip gracefully. Never scheduled: gated endpoints and market hours make
+# results environment-dependent.
+on:
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+  APCA_API_KEY_ID: ${{ secrets.APCA_API_KEY_ID }}
+  APCA_API_SECRET_KEY: ${{ secrets.APCA_API_SECRET_KEY }}
+
+jobs:
+  live:
+    name: live smoke + streams + order round-trip
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      - name: REST read-only sweeps
+        run: cargo test --test live_smoke -- --ignored --nocapture
+
+      - name: WebSocket and SSE streams
+        run: cargo test --test live_streams -- --ignored --nocapture
+
+      - name: Order submit/cancel round-trip
+        run: cargo test --test live_orders -- --ignored --nocapture
