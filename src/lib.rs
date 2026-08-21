@@ -11,12 +11,16 @@
 //! - [`stream`]: WebSocket streams for real-time market data and trading
 //!   updates, plus Server-Sent Event streams for account activities and
 //!   corporate actions.
+//! - [`broker`]: fixed-income asset discovery (US treasuries and corporate
+//!   bonds) on the Broker API (`FixedIncomeAssetsClient`) — a separate,
+//!   Basic-Auth product from the Trading API.
 //! - [`rest`]: credentials handling ([`rest::Credentials`]) shared by all
 //!   clients.
 //!
 //! All clients are async (tokio) and return [`Result`] with the crate
 //! [`Error`] type.
 
+pub mod broker;
 pub mod data;
 pub mod error;
 pub mod rest;

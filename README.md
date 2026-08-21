@@ -4,10 +4,11 @@ An async Rust client for the [Alpaca](https://alpaca.markets) **Trading API** an
 **Market Data APIs**, including their WebSocket streams. The baseline scope
 matches the Python SDK [`alpaca-py`](https://github.com/alpacahq/alpaca-py)
 (trading + data + streams), extended with a curated set of endpoints the SDK
-omits; see [docs/adr/0001](docs/adr/0001-alpaca-py-parity-scope-and-architecture.md)
-and [docs/adr/0002](docs/adr/0002-beyond-parity-coverage.md) for the scope
-decisions — the Broker, Connect (OAuth flow), and FIX APIs are deliberately out
-of scope.
+omits; see [docs/adr/0001](docs/adr/0001-alpaca-py-parity-scope-and-architecture.md),
+[docs/adr/0002](docs/adr/0002-beyond-parity-coverage.md) and
+[docs/adr/0003](docs/adr/0003-deferred-scope-coverage.md) for the scope
+decisions — the Connect (OAuth flow) and FIX APIs are deliberately out of
+scope, as is the Broker API beyond fixed-income asset discovery.
 
 ## Features
 
@@ -19,7 +20,12 @@ of scope.
   filter, `borrow_status`), clock/calendar (`/v2` plus the multi-market `/v3`
   clock and per-market calendar), short-sale locates (`/v1/locates` quotes,
   create, list, get), watchlists (by id or by name), corporate action
-  announcements, option contracts. Paper and live base URLs.
+  announcements, option contracts, crypto wallets & funding (transfers,
+  whitelisted addresses, fee estimates — requires Alpaca enablement),
+  tokenization mints and request lookups (Authorized Participants only),
+  and crypto perpetuals (beta: funding wallets, leverage, account vitals;
+  perp orders go through the standard orders endpoints with
+  `AssetClass::CryptoPerp`). Paper and live base URLs.
 - **Market data** — historical + latest + snapshots for stocks
   (`StockHistoricalDataClient`, including opening/closing auctions,
   single-symbol variants and the `meta` condition-code/exchange tables),
@@ -27,9 +33,16 @@ of scope.
   (`OptionHistoricalDataClient`, incl. `meta` conditions/exchanges), plus
   `NewsClient`, `ScreenerClient` (most actives, movers),
   `CorporateActionsClient`, `ForexClient` (historical + latest currency
-  rates), and `LogoClient` (raw logo images). List endpoints auto-paginate
+  rates), `LogoClient` (raw logo images), `FixedIncomeDataClient` (beta:
+  latest bond prices/quotes by ISIN), and `CryptoPerpDataClient` (beta:
+  latest perp bars/trades/quotes/orderbooks/funding pricing). List endpoints
+  auto-paginate
   (`next_page_token` is followed for you); request structs keep
   `limit`/`page_token` for manual control.
+- **Broker** (`broker` module) — `FixedIncomeAssetsClient` for fixed-income
+  asset discovery (US treasuries and corporates) on the Broker API; uses
+  Basic Auth credentials and requires partner onboarding. The rest of the
+  Broker API is out of scope.
 - **Streaming** (`stream` module) — `MarketDataStream` for stocks, crypto,
   options, and news channels (trades, quotes, bars, orderbooks, statuses,
   corrections), and `TradingStream` for `trade_updates`. Full auth handshake,
@@ -55,7 +68,9 @@ export APCA_API_SECRET_KEY=...
 ```
 
 `Credentials::from_env()` reads both variables. OAuth bearer tokens
-(`Credentials::oauth(...)`) are supported as an alternative.
+(`Credentials::oauth(...)`) are supported as an alternative. The broker
+client reads `APCA_BROKER_API_KEY` / `APCA_BROKER_API_SECRET` via
+`Credentials::from_broker_env()`.
 
 ## Quickstart
 
@@ -112,11 +127,13 @@ while let Some(messages) = stream.next().await? {
 
 - `src/trading/` — Trading API client, enums, models, requests
 - `src/data/` — market data clients, enums (incl. `TimeFrame`), models
-- `src/stream/` — WebSocket streams
+- `src/stream/` — WebSocket and SSE event streams
+- `src/broker.rs` — Broker API fixed-income asset lists (Basic Auth)
 - `src/rest.rs`, `src/error.rs` — shared infrastructure
 - [docs/adr/](docs/adr/) — architecture decision records
-- [docs/sprints.md](docs/sprints.md) — build plan (wave 1, complete) and
-  [docs/sprints-wave2.md](docs/sprints-wave2.md) (wave 2, in progress)
+- Build plans: [docs/sprints.md](docs/sprints.md) (wave 1, complete),
+  [docs/sprints-wave2.md](docs/sprints-wave2.md) (wave 2, complete),
+  [docs/sprints-wave3.md](docs/sprints-wave3.md) (wave 3, complete)
 - [docs/diagrams/architecture.mmd](docs/diagrams/architecture.mmd) — module diagram
 
 ## Development

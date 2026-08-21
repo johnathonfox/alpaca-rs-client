@@ -10,6 +10,7 @@ use serde::{Serialize, Serializer};
 use super::enums::{
     Adjustment, CorporateActionsType, DataFeed, MarketType, MostActivesBy, Sort, TimeFrame,
 };
+use crate::error::{Error, Result};
 
 fn join_symbols<I, S>(symbols: I) -> String
 where
@@ -429,6 +430,110 @@ impl CorporateActionsRequest {
     }
 }
 
+/// Maximum number of ISINs accepted by the fixed-income latest-prices
+/// endpoint.
+const FIXED_INCOME_PRICES_MAX_ISINS: usize = 1_000;
+
+/// Maximum number of ISINs accepted by the fixed-income latest-quotes
+/// endpoint.
+const FIXED_INCOME_QUOTES_MAX_ISINS: usize = 100;
+
+/// Comma-joins a list of values, rejecting empty lists and lists of more than
+/// `max` entries (both of which the API answers with HTTP 400).
+fn join_limited<I, S>(values: I, max: usize, what: &str) -> Result<String>
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<str>,
+{
+    let values: Vec<String> = values.into_iter().map(|v| v.as_ref().to_string()).collect();
+    if values.is_empty() {
+        return Err(Error::InvalidRequest(format!(
+            "{what} require at least one value"
+        )));
+    }
+    if values.len() > max {
+        return Err(Error::InvalidRequest(format!(
+            "{what} accept at most {max} values, got {}",
+            values.len()
+        )));
+    }
+    Ok(values.join(","))
+}
+
+/// Query parameters for the fixed-income latest-prices endpoint
+/// (`GET /v1beta1/fixed_income/latest/prices`).
+#[derive(Debug, Clone, Serialize)]
+pub struct FixedIncomeLatestRequest {
+    /// Comma-separated ISINs (at most 1000).
+    pub isins: String,
+}
+
+impl FixedIncomeLatestRequest {
+    /// Creates a request for the given ISINs, rejecting empty lists and lists
+    /// of more than 1000 ISINs client-side.
+    pub fn new<I, S>(isins: I) -> Result<Self>
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<str>,
+    {
+        Ok(Self {
+            isins: join_limited(isins, FIXED_INCOME_PRICES_MAX_ISINS, "latest prices")?,
+        })
+    }
+}
+
+/// Query parameters for the fixed-income latest-quotes endpoint
+/// (`GET /v1beta1/fixed_income/latest/quotes`).
+#[derive(Debug, Clone, Serialize)]
+pub struct FixedIncomeLatestQuotesRequest {
+    /// Comma-separated ISINs (at most 100).
+    pub isins: String,
+    /// Filters to the best bid/ask whose minimum trade size is at most this
+    /// value; a negative value returns the best bid/ask for the smallest
+    /// trade size on either side.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub trade_size: Option<i64>,
+}
+
+impl FixedIncomeLatestQuotesRequest {
+    /// Creates a request for the given ISINs, rejecting empty lists and lists
+    /// of more than 100 ISINs client-side.
+    pub fn new<I, S>(isins: I) -> Result<Self>
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<str>,
+    {
+        Ok(Self {
+            isins: join_limited(isins, FIXED_INCOME_QUOTES_MAX_ISINS, "latest quotes")?,
+            trade_size: None,
+        })
+    }
+}
+
+/// Query parameters for the crypto-perp latest endpoints
+/// (`/v1beta1/crypto-perps/global/latest/*`).
+///
+/// The symbol symbology is inconsistent across the Alpaca docs (`BTC-PERP`
+/// vs `BTCUSDT.P`); symbols are passed through verbatim.
+#[derive(Debug, Clone, Serialize)]
+pub struct CryptoPerpLatestRequest {
+    /// Comma-separated symbols.
+    pub symbols: String,
+}
+
+impl CryptoPerpLatestRequest {
+    /// Creates a request for the given symbols.
+    pub fn new<I, S>(symbols: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<str>,
+    {
+        Self {
+            symbols: join_symbols(symbols),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -521,6 +626,51 @@ mod tests {
     fn corporate_actions_request_default_serializes_empty() {
         let qs = serde_urlencoded_like(&CorporateActionsRequest::default());
         assert_eq!(qs, "");
+    }
+
+    #[test]
+    fn fixed_income_latest_request_joins_isins() {
+        let req = FixedIncomeLatestRequest::new(["US912797KJ59", "US912797SX61"]).unwrap();
+        assert_eq!(
+            serde_urlencoded_like(&req),
+            "isins=US912797KJ59%2CUS912797SX61"
+        );
+    }
+
+    #[test]
+    fn fixed_income_latest_request_validates_isin_count() {
+        assert!(matches!(
+            FixedIncomeLatestRequest::new(Vec::<String>::new()),
+            Err(Error::InvalidRequest(_))
+        ));
+        let at_cap: Vec<String> = (0..1000).map(|i| format!("ISIN{i}")).collect();
+        assert!(FixedIncomeLatestRequest::new(&at_cap).is_ok());
+        let over_cap: Vec<String> = (0..1001).map(|i| format!("ISIN{i}")).collect();
+        assert!(matches!(
+            FixedIncomeLatestRequest::new(&over_cap),
+            Err(Error::InvalidRequest(_))
+        ));
+    }
+
+    #[test]
+    fn fixed_income_latest_quotes_request_serializes_and_validates() {
+        let mut req = FixedIncomeLatestQuotesRequest::new(["US912797SX61"]).unwrap();
+        assert_eq!(serde_urlencoded_like(&req), "isins=US912797SX61");
+        req.trade_size = Some(1_000_000);
+        let qs = serde_urlencoded_like(&req);
+        assert!(qs.contains("trade_size=1000000"), "qs: {qs}");
+
+        let over_cap: Vec<String> = (0..101).map(|i| format!("ISIN{i}")).collect();
+        assert!(matches!(
+            FixedIncomeLatestQuotesRequest::new(&over_cap),
+            Err(Error::InvalidRequest(_))
+        ));
+    }
+
+    #[test]
+    fn crypto_perp_latest_request_joins_symbols() {
+        let req = CryptoPerpLatestRequest::new(["BTC-PERP", "ETH-PERP"]);
+        assert_eq!(serde_urlencoded_like(&req), "symbols=BTC-PERP%2CETH-PERP");
     }
 
     // Emulate the urlencoded query string that reqwest's `.query()` builds.

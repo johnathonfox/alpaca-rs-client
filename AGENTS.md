@@ -16,18 +16,24 @@ exported from `src/lib.rs`.
 - `src/error.rs` — `Error` (thiserror) + `Result<T>`
 - `src/rest.rs` — `Credentials` (env-var loading) + internal `RestClient`
   (auto-pagination via `next_page_token`, retry with backoff on 429/5xx)
-- `src/trading/` — trading API (`TradingClient`, enums, models, requests)
+- `src/trading/` — trading API (`TradingClient`, enums, models, requests;
+  submodules add crypto wallets/funding, perpetuals, tokenization, locates,
+  activities, watchlists-by-name)
 - `src/data/` — market data API (`StockHistoricalDataClient`,
   `CryptoHistoricalDataClient`, `OptionHistoricalDataClient`, `NewsClient`,
-  `ScreenerClient`, `CorporateActionsClient`, enums incl. `TimeFrame`, models,
-  request params)
+  `ScreenerClient`, `CorporateActionsClient`, `ForexClient`, `LogoClient`,
+  `FixedIncomeDataClient`, `CryptoPerpDataClient`, enums incl. `TimeFrame`,
+  models, request params)
 - `src/stream/` — WebSocket streams (`MarketDataStream`, `TradingStream`;
-  opt-in auto-reconnect via `ReconnectOptions`)
+  opt-in auto-reconnect via `ReconnectOptions`) and SSE event streams
+  (`ActivityEventsClient`, `CorporateActionEventsClient`)
+- `src/broker.rs` — Broker API fixed-income asset lists
+  (`FixedIncomeAssetsClient`; Basic Auth via `Credentials::from_broker_env`)
 - `examples/quickstart.rs` — runnable demo behind env credentials
 - `tests/` — wiremock-based integration tests (offline; clients pointed at the
   mock server via each client's `with_base_url` constructor)
-- `docs/adr/` — architecture decision records; `docs/sprints.md` — build plan;
-  `docs/diagrams/` — Mermaid sources
+- `docs/adr/` — architecture decision records; `docs/sprints*.md` — build
+  plans; `docs/diagrams/` — Mermaid sources
 
 Dependencies: reqwest (rustls, json, query), serde/serde_json, thiserror,
 tokio, tokio-tungstenite (rustls-tls-webpki-roots) + futures-util, url,
@@ -52,7 +58,8 @@ pass cleanly.
   in the Rust ecosystem (e.g. `reqwest` for HTTP, `serde` for JSON, `tokio` for
   async runtime) — but only add them when the code that needs them is written.
 - Never commit Alpaca API keys or secrets. Credentials belong in environment
-  variables (`APCA_API_KEY_ID`, `APCA_API_SECRET_KEY`); read them at runtime.
+  variables (`APCA_API_KEY_ID`, `APCA_API_SECRET_KEY`; broker client:
+  `APCA_BROKER_API_KEY`, `APCA_BROKER_API_SECRET`); read them at runtime.
   `.env` files must stay out of git (add to `.gitignore` if one is introduced).
 - Error handling: this is a library — return `Result` with a crate error type,
   never `panic!`/`unwrap`/`expect` in library code paths.

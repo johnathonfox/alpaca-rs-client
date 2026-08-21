@@ -6,10 +6,12 @@
 
 use alpaca_rs::data::{
     AuctionsRequest, BarsRequest, CorporateActionsClient, CorporateActionsRequest, CryptoFeed,
-    CryptoHistoricalDataClient, DataFeed, ForexClient, ForexRatesRequest, LatestForexRatesRequest,
-    LatestRequest, LogoClient, MarketMoversRequest, MarketType, MostActivesBy, MostActivesRequest,
-    NewsClient, NewsRequest, OptionHistoricalDataClient, OptionsFeed, ScreenerClient,
-    StockHistoricalDataClient, Tape, TickType, TimeFrame, TimeFrameUnit,
+    CryptoHistoricalDataClient, CryptoPerpDataClient, CryptoPerpLatestRequest, DataFeed,
+    FixedIncomeDataClient, FixedIncomeLatestQuotesRequest, FixedIncomeLatestRequest, ForexClient,
+    ForexRatesRequest, LatestForexRatesRequest, LatestRequest, LogoClient, MarketMoversRequest,
+    MarketType, MostActivesBy, MostActivesRequest, NewsClient, NewsRequest,
+    OptionHistoricalDataClient, OptionsFeed, ScreenerClient, StockHistoricalDataClient, Tape,
+    TickType, TimeFrame, TimeFrameUnit,
 };
 use alpaca_rs::rest::Credentials;
 use alpaca_rs::{Error, Result};
@@ -768,6 +770,170 @@ async fn unprocessable_entity_maps_to_error_api() -> Result<()> {
         Error::Api { status, message } => {
             assert_eq!(status, 422);
             assert!(message.contains("invalid timeframe"), "message: {message}");
+        }
+        other => panic!("expected Error::Api, got {other:?}"),
+    }
+
+    server.verify().await;
+    Ok(())
+}
+
+#[tokio::test]
+async fn fixed_income_latest_prices_parses_isin_map() -> Result<()> {
+    let server = MockServer::start().await;
+
+    // Verbatim fixture from the API docs.
+    let body = json!({"prices":{"US912797KJ59":{"p":99.6459,"t":"2025-02-14T20:58:00.648Z","ytm":4.249,"ytw":4.249}}});
+    auth(Mock::given(method("GET")))
+        .and(path("/v1beta1/fixed_income/latest/prices"))
+        .and(query_param("isins", "US912797KJ59,US912797SX61"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(&body))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let client = FixedIncomeDataClient::with_base_url(test_credentials(), &server.uri())?;
+    let resp = client
+        .latest_prices(&FixedIncomeLatestRequest::new([
+            "US912797KJ59",
+            "US912797SX61",
+        ])?)
+        .await?;
+
+    let price = &resp.prices["US912797KJ59"];
+    assert_eq!(price.price, 99.6459);
+    assert_eq!(price.yield_to_maturity, Some(4.249));
+
+    server.verify().await;
+    Ok(())
+}
+
+#[tokio::test]
+async fn fixed_income_latest_quotes_parses_isin_map() -> Result<()> {
+    let server = MockServer::start().await;
+
+    // Verbatim fixture from the API docs.
+    let body = json!({"quotes":{"US912797SX61":{"ams":1000,"ap":99.91958333,"as":1000000,"aytm":2.226923,"aytw":2.226923,"bms":1000,"bp":99.81091667,"bs":1000000,"bytm":5.236154,"bytw":5.236154,"t":"2026-05-21T06:56:01.882466873Z"}}});
+    auth(Mock::given(method("GET")))
+        .and(path("/v1beta1/fixed_income/latest/quotes"))
+        .and(query_param("isins", "US912797SX61"))
+        .and(query_param("trade_size", "1000000"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(&body))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let client = FixedIncomeDataClient::with_base_url(test_credentials(), &server.uri())?;
+    let mut req = FixedIncomeLatestQuotesRequest::new(["US912797SX61"])?;
+    req.trade_size = Some(1_000_000);
+    let resp = client.latest_quotes(&req).await?;
+
+    let quote = &resp.quotes["US912797SX61"];
+    assert_eq!(quote.bid_price, 99.81091667);
+    assert_eq!(quote.ask_size, 1_000_000);
+    assert_eq!(quote.ask_yield_to_maturity, Some(2.226923));
+
+    server.verify().await;
+    Ok(())
+}
+
+#[test]
+fn fixed_income_requests_validate_isin_limits() {
+    // Empty lists and lists over the endpoint's ISIN cap are rejected
+    // client-side, before any request goes out.
+    assert!(matches!(
+        FixedIncomeLatestRequest::new(Vec::<String>::new()),
+        Err(Error::InvalidRequest(_))
+    ));
+    let too_many_prices: Vec<String> = (0..1001).map(|i| format!("ISIN{i}")).collect();
+    assert!(matches!(
+        FixedIncomeLatestRequest::new(&too_many_prices),
+        Err(Error::InvalidRequest(_))
+    ));
+    let too_many_quotes: Vec<String> = (0..101).map(|i| format!("ISIN{i}")).collect();
+    assert!(matches!(
+        FixedIncomeLatestQuotesRequest::new(&too_many_quotes),
+        Err(Error::InvalidRequest(_))
+    ));
+}
+
+#[tokio::test]
+async fn crypto_perp_latest_pricing_uses_global_path() -> Result<()> {
+    let server = MockServer::start().await;
+
+    // Verbatim fixture from the API spec.
+    let body = json!({"pricing":{"BTC-PERP":{"t":"2022-05-27T10:18:00Z","ft":"2022-05-27T10:18:00Z","oi":90.7367,"ip":50702.8,"mp":50652.3553,"fr":0.000565699}}});
+    auth(Mock::given(method("GET")))
+        .and(path("/v1beta1/crypto-perps/global/latest/pricing"))
+        .and(query_param("symbols", "BTC-PERP,ETH-PERP"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(&body))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let client = CryptoPerpDataClient::with_base_url(test_credentials(), &server.uri())?;
+    let resp = client
+        .latest_pricing(&CryptoPerpLatestRequest::new(["BTC-PERP", "ETH-PERP"]))
+        .await?;
+
+    let pricing = &resp.pricing["BTC-PERP"];
+    assert_eq!(pricing.open_interest, 90.7367);
+    assert_eq!(pricing.funding_rate, 0.000565699);
+
+    server.verify().await;
+    Ok(())
+}
+
+#[tokio::test]
+async fn crypto_perp_latest_orderbooks_uses_global_path() -> Result<()> {
+    let server = MockServer::start().await;
+
+    // Verbatim fixture from the API spec.
+    let body = json!({"orderbooks":{"BTC-PERP":{"t":"2022-06-24T08:00:14.137774336Z","b":[{"p":20846,"s":0.1902},{"p":20350,"s":0}],"a":[{"p":20902,"s":0.0097},{"p":21444,"s":0}]}}});
+    auth(Mock::given(method("GET")))
+        .and(path("/v1beta1/crypto-perps/global/latest/orderbooks"))
+        .and(query_param("symbols", "BTC-PERP"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(&body))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let client = CryptoPerpDataClient::with_base_url(test_credentials(), &server.uri())?;
+    let resp = client
+        .latest_orderbooks(&CryptoPerpLatestRequest::new(["BTC-PERP"]))
+        .await?;
+
+    let book = &resp.orderbooks["BTC-PERP"];
+    assert_eq!(book.bids.len(), 2);
+    assert_eq!(book.bids[0].price, 20846.0);
+    assert_eq!(book.asks[1].size, 0.0);
+
+    server.verify().await;
+    Ok(())
+}
+
+#[tokio::test]
+async fn fixed_income_forbidden_maps_to_error_api() -> Result<()> {
+    let server = MockServer::start().await;
+
+    let body = json!({"code": 40310000, "message": "forbidden"});
+    Mock::given(method("GET"))
+        .and(path("/v1beta1/fixed_income/latest/prices"))
+        .respond_with(ResponseTemplate::new(403).set_body_json(&body))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let client = FixedIncomeDataClient::with_base_url(test_credentials(), &server.uri())?;
+    let err = client
+        .latest_prices(&FixedIncomeLatestRequest::new(["US912797KJ59"])?)
+        .await
+        .expect_err("403 must surface as an error");
+
+    match err {
+        Error::Api { status, message } => {
+            assert_eq!(status, 403);
+            assert!(message.contains("forbidden"), "message: {message}");
         }
         other => panic!("expected Error::Api, got {other:?}"),
     }

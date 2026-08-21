@@ -2,12 +2,15 @@ flowchart LR
     subgraph alpaca-rs
         lib[lib.rs<br/>public exports]
         subgraph infra [shared infrastructure]
-            cred[Credentials<br/>API key / OAuth bearer]
+            cred[Credentials<br/>API key / OAuth bearer /<br/>broker Basic Auth]
             rest[RestClient<br/>auth, pagination, retry]
             err[Error / Result]
         end
         subgraph trading [trading/]
             tc[TradingClient<br/>orders incl. multi-leg, positions,<br/>account, activities, assets,<br/>locates, watchlists, ...]
+            wal[wallets.rs<br/>crypto funding: wallets,<br/>transfers, whitelists, fees]
+            perp[perpetuals.rs<br/>perp funding, leverage,<br/>account vitals — beta]
+            tok[tokenization.rs<br/>mint + request lookups — AP only]
         end
         subgraph data [data/]
             stock[StockHistoricalDataClient]
@@ -18,6 +21,11 @@ flowchart LR
             ca[CorporateActionsClient]
             fx[ForexClient]
             logo[LogoClient<br/>image bytes, not JSON]
+            fi[FixedIncomeDataClient<br/>bond prices/quotes — beta]
+            cperp[CryptoPerpDataClient<br/>perp latest + funding pricing — beta]
+        end
+        subgraph broker [broker/]
+            fiassets[FixedIncomeAssetsClient<br/>US treasuries / corporates]
         end
         subgraph stream [stream/]
             mds[MarketDataStream<br/>stocks / crypto / options / news]
@@ -26,14 +34,15 @@ flowchart LR
         end
     end
 
-    tc -->|REST /v1 /v2 /v3| tapi[api / paper-api<br/>.alpaca.markets]
-    stock & crypto & option & news & screen & ca & fx & logo -->|REST| dapi[data.alpaca.markets]
+    tc & wal & perp & tok -->|REST /v1 /v2 /v3| tapi[api / paper-api<br/>.alpaca.markets]
+    stock & crypto & option & news & screen & ca & fx & logo & fi & cperp -->|REST| dapi[data.alpaca.markets]
+    fiassets -->|REST Basic Auth| bapi["broker-api[.sandbox]<br/>.alpaca.markets"]
     mds -->|WSS JSON| sdata[stream.data.alpaca.markets]
     ts -->|WSS JSON| tapi
     sse -->|SSE /v2beta1/events/activities| tapi
     sse -->|SSE /v1beta1/events/corporate-actions| dapi
 
-    lib --> trading & data & stream
-    trading & data --> infra
+    lib --> trading & data & stream & broker
+    trading & data & broker --> infra
     stream --> cred
     stream --> err

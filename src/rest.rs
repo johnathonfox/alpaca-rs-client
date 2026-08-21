@@ -23,6 +23,14 @@ pub enum Credentials {
     },
     /// An OAuth access token.
     OAuth(String),
+    /// HTTP Basic Auth pair for the Broker API (`APCA_BROKER_API_KEY` /
+    /// `APCA_BROKER_API_SECRET`).
+    BasicAuth {
+        /// The broker API key (username).
+        key: String,
+        /// The broker API secret (password).
+        secret: String,
+    },
 }
 
 impl Credentials {
@@ -42,6 +50,22 @@ impl Credentials {
         }
     }
 
+    /// Reads broker credentials from the `APCA_BROKER_API_KEY` and
+    /// `APCA_BROKER_API_SECRET` environment variables.
+    ///
+    /// Returns [`Error::MissingCredentials`] if either variable is unset or
+    /// empty.
+    pub fn from_broker_env() -> Result<Self> {
+        let key = std::env::var("APCA_BROKER_API_KEY").ok();
+        let secret = std::env::var("APCA_BROKER_API_SECRET").ok();
+        match (key, secret) {
+            (Some(key), Some(secret)) if !key.is_empty() && !secret.is_empty() => {
+                Ok(Self::BasicAuth { key, secret })
+            }
+            _ => Err(Error::MissingCredentials),
+        }
+    }
+
     /// Returns the `(key, secret)` pair used by the WebSocket `auth` action.
     ///
     /// For OAuth credentials the access token is sent as the key with an
@@ -50,18 +74,20 @@ impl Credentials {
         match self {
             Credentials::Key { key_id, secret_key } => (key_id, secret_key),
             Credentials::OAuth(token) => (token, ""),
+            Credentials::BasicAuth { key, secret } => (key, secret),
         }
     }
 
     /// Adds the authentication headers for these credentials to an HTTP
     /// request: the `APCA-API-*` pair for key credentials, a bearer token for
-    /// OAuth ones.
+    /// OAuth ones, HTTP Basic Auth for broker credentials.
     pub(crate) fn authenticate(&self, req: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
         match self {
             Credentials::Key { key_id, secret_key } => req
                 .header("APCA-API-KEY-ID", key_id)
                 .header("APCA-API-SECRET-KEY", secret_key),
             Credentials::OAuth(token) => req.bearer_auth(token),
+            Credentials::BasicAuth { key, secret } => req.basic_auth(key, Some(secret)),
         }
     }
 }
@@ -323,6 +349,17 @@ impl RestClient {
         self.post_with_query(path, &(), body).await
     }
 
+    /// Issues a POST request with only a serialized query string and no
+    /// body (used by the perpetuals leverage endpoint).
+    pub(crate) async fn post_query<T: DeserializeOwned>(
+        &self,
+        path: &str,
+        query: &(impl Serialize + ?Sized),
+    ) -> Result<T> {
+        let req = self.http.post(self.url(path)?).query(query);
+        self.send(req).await
+    }
+
     /// Issues a POST request with both a serialized query string and a JSON
     /// body, as the `:by_name` watchlist endpoints require.
     pub(crate) async fn post_with_query<T: DeserializeOwned>(
@@ -332,6 +369,22 @@ impl RestClient {
         body: &(impl Serialize + ?Sized),
     ) -> Result<T> {
         let req = self.http.post(self.url(path)?).query(query).json(body);
+        self.send(req).await
+    }
+
+    /// Issues a POST request with a JSON body and an `Idempotency-Key`
+    /// header (used by the tokenization mint endpoint).
+    pub(crate) async fn post_with_idempotency_key<T: DeserializeOwned>(
+        &self,
+        path: &str,
+        body: &(impl Serialize + ?Sized),
+        idempotency_key: Option<&str>,
+    ) -> Result<T> {
+        let req = self.http.post(self.url(path)?).json(body);
+        let req = match idempotency_key {
+            Some(key) => req.header("Idempotency-Key", key),
+            None => req,
+        };
         self.send(req).await
     }
 

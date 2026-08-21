@@ -11,9 +11,11 @@ use serde::{Deserialize, Serialize};
 
 use super::enums::{
     ActivityType, AssetAttribute, AssetClass, AssetExchange, AssetStatus, BorrowStatus,
-    ContractType, DTBPCheck, ExerciseStyle, LocateQuoteErrorCode, LocateStatus, Market,
-    MarketPhase, NonTradeActivityStatus, OrderClass, OrderSide, OrderStatus, OrderType, PDTCheck,
-    PositionSide, TimeInForce, TradeActivityType, TradeConfirmationEmail,
+    ContractType, CryptoTransferDirection, CryptoTransferStatus, DTBPCheck, ExerciseStyle,
+    LocateQuoteErrorCode, LocateStatus, Market, MarketPhase, NonTradeActivityStatus, OrderClass,
+    OrderSide, OrderStatus, OrderType, PDTCheck, PositionSide, TimeInForce, TokenizationIssuer,
+    TokenizationNetwork, TokenizationRequestStatus, TokenizationRequestType, TradeActivityType,
+    TradeConfirmationEmail, WhitelistStatus,
 };
 
 /// A trading account.
@@ -805,6 +807,216 @@ pub struct LocatesResponse {
     pub next_page_token: Option<String>,
 }
 
+/// A crypto wallet of the account, as returned by `GET /v2/wallets` (and the
+/// perpetuals equivalent).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CryptoWallet {
+    /// The wallet address.
+    pub address: String,
+    /// The chain the wallet is on (e.g. `"ETH"`). Absent from the published
+    /// schema but observed in some responses.
+    pub chain: Option<String>,
+    /// When the wallet was created.
+    pub created_at: DateTime<Utc>,
+    /// Asset id of the wallet's currency. Observed live but missing from the
+    /// published schema, hence optional.
+    pub asset_id: Option<String>,
+}
+
+/// A crypto wallet transfer (deposit or withdrawal).
+///
+/// The published schema requires none of these fields, so all of them are
+/// optional.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CryptoTransfer {
+    /// Transfer id.
+    pub id: Option<String>,
+    /// On-chain transaction hash.
+    pub tx_hash: Option<String>,
+    /// Whether the funds moved into or out of the account.
+    pub direction: Option<CryptoTransferDirection>,
+    /// Lifecycle status of the transfer.
+    pub status: Option<CryptoTransferStatus>,
+    /// Amount transferred, in units of `asset`.
+    pub amount: Option<Decimal>,
+    /// USD value of the transfer.
+    pub usd_value: Option<Decimal>,
+    /// Network (gas) fee of the transfer.
+    pub network_fee: Option<Decimal>,
+    /// Alpaca-side fees of the transfer.
+    pub fees: Option<Decimal>,
+    /// The chain the transfer happened on (e.g. `"ETH"`).
+    pub chain: Option<String>,
+    /// The transferred asset (e.g. `"USDC"`).
+    pub asset: Option<String>,
+    /// The sending address.
+    pub from_address: Option<String>,
+    /// The receiving address.
+    pub to_address: Option<String>,
+    /// When the transfer was created.
+    pub created_at: Option<DateTime<Utc>>,
+}
+
+/// A whitelisted crypto withdrawal address.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WhitelistedAddress {
+    /// Whitelist entry id.
+    pub id: String,
+    /// The chain of the address (e.g. `"ETH"`).
+    pub chain: Option<String>,
+    /// The asset the address is whitelisted for.
+    pub asset: String,
+    /// The whitelisted address.
+    pub address: String,
+    /// Approval status of the address.
+    pub status: WhitelistStatus,
+    /// When the address was whitelisted.
+    pub created_at: DateTime<Utc>,
+}
+
+/// A transfer fee estimate, as returned by `GET /v2/wallets/fees/estimate`
+/// (and the perpetuals equivalent, which omits `network_fee`).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TransferFeeEstimate {
+    /// The estimated Alpaca fee.
+    pub fee: Decimal,
+    /// The estimated network (gas) fee. The perpetuals endpoint does not
+    /// return one.
+    pub network_fee: Option<Decimal>,
+}
+
+/// The leverage setting of a crypto perpetual symbol, as returned by
+/// `GET|POST /v2/perpetuals/leverage`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PerpLeverage {
+    /// The perpetual symbol (e.g. `"BTC-PERP"`).
+    pub symbol: String,
+    /// The leverage multiplier in effect.
+    pub leverage: u32,
+}
+
+/// Deserializes a `Decimal` that may arrive either as a JSON string or as a
+/// plain JSON number. The perpetuals spec types several money fields of the
+/// account-vitals endpoint as `integer` (which looks wrong), so both shapes
+/// are accepted.
+fn number_or_string<'de, D>(deserializer: D) -> std::result::Result<Option<Decimal>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    match Option::<serde_json::Value>::deserialize(deserializer)? {
+        None | Some(serde_json::Value::Null) => Ok(None),
+        Some(serde_json::Value::String(raw)) => raw
+            .parse::<Decimal>()
+            .map(Some)
+            .map_err(serde::de::Error::custom),
+        Some(serde_json::Value::Number(number)) => number
+            .to_string()
+            .parse::<Decimal>()
+            .map(Some)
+            .map_err(serde::de::Error::custom),
+        Some(other) => Err(serde::de::Error::custom(format!(
+            "expected a number or a string, got {other}"
+        ))),
+    }
+}
+
+/// Account vitals of the crypto perpetuals account, as returned by
+/// `GET /v2/perpetuals/account_vitals`.
+///
+/// The schema is thin and the docs mention fields it omits (e.g. the margin
+/// ratio), so every field is optional, and each accepts both JSON numbers and
+/// JSON strings.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PerpAccountVitals {
+    /// Maintenance margin requirement.
+    #[serde(default, deserialize_with = "number_or_string")]
+    pub maintenance_margin: Option<Decimal>,
+    /// Balance available as collateral.
+    #[serde(default, deserialize_with = "number_or_string")]
+    pub collateral_balance: Option<Decimal>,
+    /// Total collateral.
+    #[serde(default, deserialize_with = "number_or_string")]
+    pub total_collateral: Option<Decimal>,
+    /// Unrealized profit/loss.
+    #[serde(default, deserialize_with = "number_or_string")]
+    pub profit_loss: Option<Decimal>,
+    /// Margin ratio (mentioned in the docs, missing from the schema).
+    #[serde(default, deserialize_with = "number_or_string")]
+    pub margin_ratio: Option<Decimal>,
+}
+
+/// Response of `POST /v2/tokenization/mint`: the mint request as accepted.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TokenizationMintResponse {
+    /// Id of the created tokenization request.
+    pub tokenization_request_id: String,
+    /// Status of the request (typically [`TokenizationRequestStatus::Pending`]
+    /// on acceptance).
+    pub status: TokenizationRequestStatus,
+    /// Symbol of the underlying asset (e.g. `"AAPL"`).
+    pub underlying_symbol: String,
+    /// Symbol of the minted token (e.g. `"AAPLx"`).
+    pub token_symbol: String,
+    /// Quantity minted.
+    pub qty: Decimal,
+    /// Issuer of the tokenized asset.
+    pub issuer: TokenizationIssuer,
+    /// Network the asset is minted on.
+    pub network: TokenizationNetwork,
+    /// When the request was created.
+    pub created_at: DateTime<Utc>,
+    /// Client-provided idempotency reference, when one was supplied.
+    pub client_request_id: Option<String>,
+}
+
+/// A tokenization (mint or redeem) request, as returned by
+/// `GET /v2/tokenization/requests*`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TokenizationRequest {
+    /// Tokenization request id.
+    pub tokenization_request_id: String,
+    /// When the request was created.
+    pub created_at: DateTime<Utc>,
+    /// Whether this is a mint or a redeem request (serialized as `type`).
+    #[serde(rename = "type")]
+    pub request_type: TokenizationRequestType,
+    /// Lifecycle status of the request.
+    pub status: TokenizationRequestStatus,
+    /// Symbol of the underlying asset (e.g. `"TSLA"`).
+    pub underlying_symbol: String,
+    /// Symbol of the tokenized asset (e.g. `"TSLAx"`).
+    pub token_symbol: String,
+    /// Quantity minted or redeemed.
+    pub qty: Decimal,
+    /// Issuer of the tokenized asset.
+    pub issuer: TokenizationIssuer,
+    /// Network the asset lives on.
+    pub network: TokenizationNetwork,
+    /// Wallet address the tokens are delivered to (mint) or taken from
+    /// (redeem).
+    pub wallet_address: String,
+    /// When the request was last updated.
+    pub updated_at: Option<DateTime<Utc>>,
+    /// Fees charged for the request.
+    pub fees: Option<Decimal>,
+    /// On-chain transaction hash.
+    pub tx_hash: Option<String>,
+    /// The issuer's own request id.
+    pub issuer_request_id: Option<String>,
+    /// Client-provided idempotency reference, when one was supplied.
+    pub client_request_id: Option<String>,
+    /// Client-provided account id, when supplied.
+    pub client_account_id: Option<String>,
+    /// Client-provided external account id, when supplied.
+    pub client_external_account_id: Option<String>,
+    /// Deprecated by the API in favour of `client_account_id`; still returned
+    /// for now.
+    pub account: Option<String>,
+    /// Deprecated by the API in favour of `issuer_request_id`; still returned
+    /// for now.
+    pub issuer_account: Option<String>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1469,5 +1681,125 @@ mod tests {
         let quotes: LocateQuotesResponse = serde_json::from_str(json).unwrap();
         assert!(quotes.quotes.is_empty());
         assert!(quotes.errors.is_empty());
+    }
+
+    #[test]
+    fn deserialize_crypto_wallet_fixture() {
+        // Verbatim from the wallets guide.
+        let json = r#"{"asset_id":"5d0de74f-827b-41a7-9f74-9c07c08fe55f","address":"0x42a76C83014e886e639768D84EAF3573b1876844","created_at":"2025-08-07T08:52:40.656166Z"}"#;
+        let wallet: CryptoWallet = serde_json::from_str(json).unwrap();
+        assert_eq!(wallet.address, "0x42a76C83014e886e639768D84EAF3573b1876844");
+        assert_eq!(
+            wallet.asset_id.as_deref(),
+            Some("5d0de74f-827b-41a7-9f74-9c07c08fe55f")
+        );
+        assert_eq!(wallet.chain, None);
+    }
+
+    #[test]
+    fn deserialize_crypto_transfer_fixture() {
+        // Verbatim from the wallets guide.
+        let json = r#"{"id":"876b1c4f-df5e-4d1b-beaa-81af7f7bd02c","tx_hash":"0xaca1f6ba105a68771d966b4ce17e0992ad3d8030d127cdb18e113efa3a864992","direction":"INCOMING","amount":"10","usd_value":"9.99707","chain":"ETH","asset":"USDC","from_address":"0x3C3380cdFb94dFEEaA41cAD9F58254AE380d752D","to_address":"0x42a76C83014e886e639768D84EAF3573b1876844","status":"COMPLETE","created_at":"2025-08-07T10:31:41.964121Z","network_fee":"0","fees":"0"}"#;
+        let transfer: CryptoTransfer = serde_json::from_str(json).unwrap();
+        assert_eq!(
+            transfer.id.as_deref(),
+            Some("876b1c4f-df5e-4d1b-beaa-81af7f7bd02c")
+        );
+        assert_eq!(transfer.direction, Some(CryptoTransferDirection::Incoming));
+        assert_eq!(transfer.status, Some(CryptoTransferStatus::Complete));
+        assert_eq!(transfer.amount, Some(Decimal::new(10, 0)));
+        assert_eq!(transfer.usd_value, Some(Decimal::new(999_707, 5)));
+        assert_eq!(transfer.network_fee, Some(Decimal::ZERO));
+        assert_eq!(transfer.chain.as_deref(), Some("ETH"));
+    }
+
+    #[test]
+    fn deserialize_whitelisted_address_fixture() {
+        // Verbatim from the wallets guide.
+        let json = r#"{"id":"45efdedd-28cd-4665-98b4-601d5f34ae0a","chain":"ETH","asset":"USDC","address":"0xf38Ecf5764fD2dEcB0dd9C1E7513a0b6eC0dD08a","created_at":"2025-08-07T13:16:46.49111Z","status":"PENDING"}"#;
+        let address: WhitelistedAddress = serde_json::from_str(json).unwrap();
+        assert_eq!(address.id, "45efdedd-28cd-4665-98b4-601d5f34ae0a");
+        assert_eq!(address.status, WhitelistStatus::Pending);
+        assert_eq!(address.chain.as_deref(), Some("ETH"));
+    }
+
+    #[test]
+    fn deserialize_transfer_fee_estimate() {
+        // The spot endpoint returns both fee and network_fee as strings.
+        let json = r#"{"fee":"0.25","network_fee":"0.001"}"#;
+        let estimate: TransferFeeEstimate = serde_json::from_str(json).unwrap();
+        assert_eq!(estimate.fee, Decimal::new(25, 2));
+        assert_eq!(estimate.network_fee, Some(Decimal::new(1, 3)));
+
+        // The perpetuals endpoint returns only the fee.
+        let json = r#"{"fee":"0.25"}"#;
+        let estimate: TransferFeeEstimate = serde_json::from_str(json).unwrap();
+        assert_eq!(estimate.fee, Decimal::new(25, 2));
+        assert_eq!(estimate.network_fee, None);
+    }
+
+    #[test]
+    fn deserialize_perp_leverage() {
+        let json = r#"{"symbol":"BTC-PERP","leverage":5}"#;
+        let leverage: PerpLeverage = serde_json::from_str(json).unwrap();
+        assert_eq!(leverage.symbol, "BTC-PERP");
+        assert_eq!(leverage.leverage, 5);
+    }
+
+    #[test]
+    fn deserialize_perp_account_vitals_accepts_numbers_and_strings() {
+        // The spec types several of these money fields as integer; the docs
+        // show strings. Both must parse, and absent fields stay `None`.
+        let json = r#"{"maintenance_margin":"100.5","collateral_balance":200.25,"total_collateral":"300","profit_loss":-10.5,"margin_ratio":"0.75"}"#;
+        let vitals: PerpAccountVitals = serde_json::from_str(json).unwrap();
+        assert_eq!(vitals.maintenance_margin, Some(Decimal::new(1005, 1)));
+        assert_eq!(vitals.collateral_balance, Some(Decimal::new(20_025, 2)));
+        assert_eq!(vitals.total_collateral, Some(Decimal::new(300, 0)));
+        assert_eq!(vitals.profit_loss, Some(Decimal::new(-105, 1)));
+        assert_eq!(vitals.margin_ratio, Some(Decimal::new(75, 2)));
+
+        let empty: PerpAccountVitals = serde_json::from_str("{}").unwrap();
+        assert_eq!(empty.maintenance_margin, None);
+        assert_eq!(empty.margin_ratio, None);
+    }
+
+    #[test]
+    fn deserialize_tokenization_mint_response_fixture() {
+        // Verbatim from the tokenization guide; note the `-04:00` offset.
+        let json = r#"{"tokenization_request_id":"14d484e3-46f9-4e11-99ac-6fee0d4455c7","created_at":"2025-09-12T17:28:48.642437-04:00","status":"pending","underlying_symbol":"AAPL","token_symbol":"AAPLx","qty":"3","issuer":"xstocks","network":"solana","client_request_id":"my-mint-ref-001"}"#;
+        let mint: TokenizationMintResponse = serde_json::from_str(json).unwrap();
+        assert_eq!(
+            mint.tokenization_request_id,
+            "14d484e3-46f9-4e11-99ac-6fee0d4455c7"
+        );
+        assert_eq!(mint.status, TokenizationRequestStatus::Pending);
+        assert_eq!(mint.qty, Decimal::new(3, 0));
+        assert_eq!(mint.issuer, TokenizationIssuer::XStocks);
+        assert_eq!(mint.network, TokenizationNetwork::Solana);
+        // The `-04:00` offset is normalized to UTC on parse.
+        assert_eq!(
+            mint.created_at,
+            DateTime::parse_from_rfc3339("2025-09-12T21:28:48.642437Z").unwrap()
+        );
+        assert_eq!(mint.client_request_id.as_deref(), Some("my-mint-ref-001"));
+    }
+
+    #[test]
+    fn deserialize_tokenization_request_fixture() {
+        // Verbatim from the tokenization spec.
+        let json = r#"{"created_at":"2025-11-04T18:38:01.942282Z","fees":"0.5","issuer":"xstocks","network":"solana","qty":"1.0","status":"completed","token_symbol":"TSLAx","tokenization_request_id":"5b1d6a3e-7f0a-4d2c-b8e1-9e6f1c0d2c4a","tx_hash":"5J7ZxK4QwR3vH2pY1aB6sN8cM9tD0fA2eXyVwUjL3kPqR4mZcF7nB1tA8sH6dG2pE","type":"mint","underlying_symbol":"TSLA","updated_at":"2025-11-04T18:38:42.117004Z","wallet_address":"5dXY1aH2tQpV3wXmJg6Z7c8B4nKvF9bA1pQrSt2uVwYxXz"}"#;
+        let request: TokenizationRequest = serde_json::from_str(json).unwrap();
+        assert_eq!(
+            request.tokenization_request_id,
+            "5b1d6a3e-7f0a-4d2c-b8e1-9e6f1c0d2c4a"
+        );
+        assert_eq!(request.request_type, TokenizationRequestType::Mint);
+        assert_eq!(request.status, TokenizationRequestStatus::Completed);
+        assert_eq!(request.qty, Decimal::new(10, 1));
+        assert_eq!(request.fees, Some(Decimal::new(5, 1)));
+        assert_eq!(request.underlying_symbol, "TSLA");
+        assert!(request.updated_at.is_some());
+        assert_eq!(request.client_request_id, None);
+        assert_eq!(request.account, None);
     }
 }

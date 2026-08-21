@@ -8,13 +8,17 @@ use alpaca_rs::rest::Credentials;
 use alpaca_rs::trading::{
     AccountActivitiesRequest, AccountActivity, ActivityType, AddAssetToWatchlistRequest,
     AssetAttribute, BorrowStatus, CalendarTimezone, CalendarV3Request, CreateLocateRequest,
-    GetAssetsRequest, GetLocatesRequest, LocateQuoteErrorCode, LocateStatus, Market, MarketPhase,
-    OrderRequest, OrderSide, TimeInForce, TradingClient, UpdateWatchlistRequest,
+    CreateWhitelistedAddressRequest, CryptoChain, CryptoTransferDirection, GetAssetsRequest,
+    GetLocatesRequest, GetTokenizationRequestsRequest, GetWalletsRequest, LocateQuoteErrorCode,
+    LocateStatus, Market, MarketPhase, OrderRequest, OrderSide, TimeInForce, TokenizationIssuer,
+    TokenizationMintRequest, TokenizationNetwork, TokenizationRequestStatus,
+    TokenizationRequestType, TradingClient, TransferFeeEstimateRequest, UpdateWatchlistRequest,
+    WhitelistStatus,
 };
 use alpaca_rs::{Error, Result};
 use rust_decimal::Decimal;
 use serde_json::json;
-use wiremock::matchers::{body_json, header, method, path, query_param};
+use wiremock::matchers::{body_json, body_string, header, method, path, query_param};
 use wiremock::{Mock, MockBuilder, MockServer, ResponseTemplate};
 
 fn test_credentials() -> Credentials {
@@ -914,6 +918,461 @@ async fn watchlist_by_name_unknown_name_maps_to_error_api() -> Result<()> {
         }
         other => panic!("expected Error::Api, got {other:?}"),
     }
+
+    server.verify().await;
+    Ok(())
+}
+
+// --- Crypto wallets & funding (`/v2/wallets*`) -----------------------------
+
+const WALLET_JSON: &str = r#"{"asset_id":"5d0de74f-827b-41a7-9f74-9c07c08fe55f","address":"0x42a76C83014e886e639768D84EAF3573b1876844","created_at":"2025-08-07T08:52:40.656166Z"}"#;
+
+const TRANSFER_JSON: &str = r#"{"id":"876b1c4f-df5e-4d1b-beaa-81af7f7bd02c","tx_hash":"0xaca1f6ba105a68771d966b4ce17e0992ad3d8030d127cdb18e113efa3a864992","direction":"INCOMING","amount":"10","usd_value":"9.99707","chain":"ETH","asset":"USDC","from_address":"0x3C3380cdFb94dFEEaA41cAD9F58254AE380d752D","to_address":"0x42a76C83014e886e639768D84EAF3573b1876844","status":"COMPLETE","created_at":"2025-08-07T10:31:41.964121Z","network_fee":"0","fees":"0"}"#;
+
+const WHITELIST_JSON: &str = r#"{"id":"45efdedd-28cd-4665-98b4-601d5f34ae0a","chain":"ETH","asset":"USDC","address":"0xf38Ecf5764fD2dEcB0dd9C1E7513a0b6eC0dD08a","created_at":"2025-08-07T13:16:46.49111Z","status":"PENDING"}"#;
+
+#[tokio::test]
+async fn get_wallets_parses_array_shape() -> Result<()> {
+    let server = MockServer::start().await;
+
+    auth(Mock::given(method("GET")))
+        .and(path("/v2/wallets"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_raw(format!("[{WALLET_JSON}]"), "application/json"),
+        )
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let client = TradingClient::with_base_url(test_credentials(), &server.uri())?;
+    let wallets = client.get_wallets(&GetWalletsRequest::default()).await?;
+
+    assert_eq!(wallets.len(), 1);
+    assert_eq!(
+        wallets[0].address,
+        "0x42a76C83014e886e639768D84EAF3573b1876844"
+    );
+    assert_eq!(
+        wallets[0].asset_id.as_deref(),
+        Some("5d0de74f-827b-41a7-9f74-9c07c08fe55f")
+    );
+
+    server.verify().await;
+    Ok(())
+}
+
+#[tokio::test]
+async fn get_wallets_parses_single_object_shape_when_asset_filtered() -> Result<()> {
+    let server = MockServer::start().await;
+
+    // Quirk: with the `asset` filter the endpoint answers with one wallet
+    // object instead of an array.
+    auth(Mock::given(method("GET")))
+        .and(path("/v2/wallets"))
+        .and(query_param("asset", "USDC"))
+        .respond_with(ResponseTemplate::new(200).set_body_raw(WALLET_JSON, "application/json"))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let client = TradingClient::with_base_url(test_credentials(), &server.uri())?;
+    let wallets = client
+        .get_wallets(&GetWalletsRequest {
+            asset: Some("USDC".into()),
+            chain: Some(CryptoChain::Eth),
+        })
+        .await?;
+
+    assert_eq!(wallets.len(), 1);
+    assert_eq!(
+        wallets[0].asset_id.as_deref(),
+        Some("5d0de74f-827b-41a7-9f74-9c07c08fe55f")
+    );
+
+    server.verify().await;
+    Ok(())
+}
+
+#[tokio::test]
+async fn get_wallet_transfer_parses_fixture() -> Result<()> {
+    let server = MockServer::start().await;
+
+    auth(Mock::given(method("GET")))
+        .and(path(
+            "/v2/wallets/transfers/876b1c4f-df5e-4d1b-beaa-81af7f7bd02c",
+        ))
+        .respond_with(ResponseTemplate::new(200).set_body_raw(TRANSFER_JSON, "application/json"))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let client = TradingClient::with_base_url(test_credentials(), &server.uri())?;
+    let transfer = client
+        .get_wallet_transfer("876b1c4f-df5e-4d1b-beaa-81af7f7bd02c")
+        .await?;
+
+    assert_eq!(transfer.direction, Some(CryptoTransferDirection::Incoming));
+    assert_eq!(transfer.amount, Some(Decimal::new(10, 0)));
+
+    server.verify().await;
+    Ok(())
+}
+
+#[tokio::test]
+async fn create_whitelisted_address_parses_array_wrapped_response() -> Result<()> {
+    let server = MockServer::start().await;
+
+    let expected_body = json!({
+        "address": "0xf38Ecf5764fD2dEcB0dd9C1E7513a0b6eC0dD08a",
+        "asset": "USDC",
+        "chain": "ETH"
+    });
+    auth(Mock::given(method("POST")))
+        .and(path("/v2/wallets/whitelists"))
+        .and(body_json(&expected_body))
+        .respond_with(
+            // The guide shows the response array-wrapped; the schema says a
+            // single object. Exercise the lenient shape here.
+            ResponseTemplate::new(200)
+                .set_body_raw(format!("[{WHITELIST_JSON}]"), "application/json"),
+        )
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let client = TradingClient::with_base_url(test_credentials(), &server.uri())?;
+    let address = client
+        .create_whitelisted_address(&CreateWhitelistedAddressRequest {
+            address: "0xf38Ecf5764fD2dEcB0dd9C1E7513a0b6eC0dD08a".into(),
+            asset: "USDC".into(),
+            chain: Some(CryptoChain::Eth),
+        })
+        .await?;
+
+    assert_eq!(address.id, "45efdedd-28cd-4665-98b4-601d5f34ae0a");
+    assert_eq!(address.status, WhitelistStatus::Pending);
+
+    server.verify().await;
+    Ok(())
+}
+
+#[tokio::test]
+async fn delete_whitelisted_address_handles_empty_200() -> Result<()> {
+    let server = MockServer::start().await;
+
+    auth(Mock::given(method("DELETE")))
+        .and(path(
+            "/v2/wallets/whitelists/45efdedd-28cd-4665-98b4-601d5f34ae0a",
+        ))
+        .respond_with(ResponseTemplate::new(200))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let client = TradingClient::with_base_url(test_credentials(), &server.uri())?;
+    client
+        .delete_whitelisted_address("45efdedd-28cd-4665-98b4-601d5f34ae0a")
+        .await?;
+
+    server.verify().await;
+    Ok(())
+}
+
+#[tokio::test]
+async fn get_transfer_fee_estimate_parses_fee_and_network_fee() -> Result<()> {
+    let server = MockServer::start().await;
+
+    auth(Mock::given(method("GET")))
+        .and(path("/v2/wallets/fees/estimate"))
+        .and(query_param("asset", "USDC"))
+        .and(query_param("amount", "10"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "fee": "0.25",
+            "network_fee": "0.001"
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let client = TradingClient::with_base_url(test_credentials(), &server.uri())?;
+    let estimate = client
+        .get_transfer_fee_estimate(&TransferFeeEstimateRequest {
+            asset: "USDC".into(),
+            from_address: "0x3C3380cdFb94dFEEaA41cAD9F58254AE380d752D".into(),
+            to_address: "0x42a76C83014e886e639768D84EAF3573b1876844".into(),
+            amount: Decimal::new(10, 0),
+        })
+        .await?;
+
+    assert_eq!(estimate.fee, Decimal::new(25, 2));
+    assert_eq!(estimate.network_fee, Some(Decimal::new(1, 3)));
+
+    server.verify().await;
+    Ok(())
+}
+
+#[tokio::test]
+async fn wallet_endpoints_map_4xx_to_error_api() -> Result<()> {
+    let server = MockServer::start().await;
+
+    let body = json!({"code": 40310000, "message": "crypto funding is not enabled"});
+    Mock::given(method("GET"))
+        .and(path("/v2/wallets"))
+        .respond_with(ResponseTemplate::new(403).set_body_json(&body))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let client = TradingClient::with_base_url(test_credentials(), &server.uri())?;
+    let err = client
+        .get_wallets(&GetWalletsRequest::default())
+        .await
+        .expect_err("403 must surface as an error");
+
+    match err {
+        Error::Api { status, message } => {
+            assert_eq!(status, 403);
+            assert!(
+                message.contains("crypto funding is not enabled"),
+                "message: {message}"
+            );
+        }
+        other => panic!("expected Error::Api, got {other:?}"),
+    }
+
+    server.verify().await;
+    Ok(())
+}
+
+// --- Crypto perpetuals (`/v2/perpetuals/*`) --------------------------------
+
+#[tokio::test]
+async fn set_perp_leverage_posts_query_params_without_body() -> Result<()> {
+    let server = MockServer::start().await;
+
+    auth(Mock::given(method("POST")))
+        .and(path("/v2/perpetuals/leverage"))
+        .and(query_param("symbol", "BTC-PERP"))
+        .and(query_param("leverage", "5"))
+        .and(body_string(""))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "symbol": "BTC-PERP",
+            "leverage": 5
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let client = TradingClient::with_base_url(test_credentials(), &server.uri())?;
+    let leverage = client.set_perp_leverage("BTC-PERP", 5).await?;
+
+    assert_eq!(leverage.symbol, "BTC-PERP");
+    assert_eq!(leverage.leverage, 5);
+
+    server.verify().await;
+    Ok(())
+}
+
+#[tokio::test]
+async fn get_perp_leverage_parses_response() -> Result<()> {
+    let server = MockServer::start().await;
+
+    auth(Mock::given(method("GET")))
+        .and(path("/v2/perpetuals/leverage"))
+        .and(query_param("symbol", "BTC-PERP"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "symbol": "BTC-PERP",
+            "leverage": 10
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let client = TradingClient::with_base_url(test_credentials(), &server.uri())?;
+    let leverage = client.get_perp_leverage("BTC-PERP").await?;
+
+    assert_eq!(leverage.leverage, 10);
+
+    server.verify().await;
+    Ok(())
+}
+
+#[tokio::test]
+async fn get_perp_account_vitals_accepts_numbers_and_strings() -> Result<()> {
+    let server = MockServer::start().await;
+
+    auth(Mock::given(method("GET")))
+        .and(path("/v2/perpetuals/account_vitals"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "maintenance_margin": "100.5",
+            "collateral_balance": 200.25,
+            "total_collateral": "300",
+            "profit_loss": -10.5,
+            "margin_ratio": "0.75"
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let client = TradingClient::with_base_url(test_credentials(), &server.uri())?;
+    let vitals = client.get_perp_account_vitals().await?;
+
+    assert_eq!(vitals.maintenance_margin, Some(Decimal::new(1005, 1)));
+    assert_eq!(vitals.collateral_balance, Some(Decimal::new(20_025, 2)));
+    assert_eq!(vitals.total_collateral, Some(Decimal::new(300, 0)));
+    assert_eq!(vitals.profit_loss, Some(Decimal::new(-105, 1)));
+    assert_eq!(vitals.margin_ratio, Some(Decimal::new(75, 2)));
+
+    server.verify().await;
+    Ok(())
+}
+
+#[tokio::test]
+async fn perp_wallet_transfer_posts_body() -> Result<()> {
+    let server = MockServer::start().await;
+
+    let expected_body = json!({
+        "amount": "2.5",
+        "address": "0x42a76C83014e886e639768D84EAF3573b1876844",
+        "asset": "USDC"
+    });
+    auth(Mock::given(method("POST")))
+        .and(path("/v2/perpetuals/wallets/transfers"))
+        .and(body_json(&expected_body))
+        .respond_with(ResponseTemplate::new(200).set_body_raw(TRANSFER_JSON, "application/json"))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let client = TradingClient::with_base_url(test_credentials(), &server.uri())?;
+    let transfer = client
+        .create_perp_wallet_transfer(&alpaca_rs::trading::CreatePerpTransferRequest {
+            amount: Decimal::new(25, 1),
+            address: "0x42a76C83014e886e639768D84EAF3573b1876844".into(),
+            asset: "USDC".into(),
+        })
+        .await?;
+
+    assert_eq!(transfer.asset.as_deref(), Some("USDC"));
+
+    server.verify().await;
+    Ok(())
+}
+
+// --- Tokenization (`/v2/tokenization/*`) -----------------------------------
+
+const MINT_RESPONSE_JSON: &str = r#"{"tokenization_request_id":"14d484e3-46f9-4e11-99ac-6fee0d4455c7","created_at":"2025-09-12T17:28:48.642437-04:00","status":"pending","underlying_symbol":"AAPL","token_symbol":"AAPLx","qty":"3","issuer":"xstocks","network":"solana","client_request_id":"my-mint-ref-001"}"#;
+
+const TOKENIZATION_REQUEST_JSON: &str = r#"{"created_at":"2025-11-04T18:38:01.942282Z","fees":"0.5","issuer":"xstocks","network":"solana","qty":"1.0","status":"completed","token_symbol":"TSLAx","tokenization_request_id":"5b1d6a3e-7f0a-4d2c-b8e1-9e6f1c0d2c4a","tx_hash":"5J7ZxK4QwR3vH2pY1aB6sN8cM9tD0fA2eXyVwUjL3kPqR4mZcF7nB1tA8sH6dG2pE","type":"mint","underlying_symbol":"TSLA","updated_at":"2025-11-04T18:38:42.117004Z","wallet_address":"5dXY1aH2tQpV3wXmJg6Z7c8B4nKvF9bA1pQrSt2uVwYxXz"}"#;
+
+#[tokio::test]
+async fn mint_tokenized_asset_sends_idempotency_key_header() -> Result<()> {
+    let server = MockServer::start().await;
+
+    let expected_body = json!({
+        "underlying_symbol": "AAPL",
+        "qty": "3",
+        "issuer": "xstocks",
+        "network": "solana",
+        "wallet_address": "5dXY1aH2tQpV3wXmJg6Z7c8B4nKvF9bA1pQrSt2uVwYxXz",
+        "client_request_id": "my-mint-ref-001"
+    });
+    auth(Mock::given(method("POST")))
+        .and(path("/v2/tokenization/mint"))
+        .and(header("Idempotency-Key", "mint-key-123"))
+        .and(body_json(&expected_body))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_raw(MINT_RESPONSE_JSON, "application/json"),
+        )
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let client = TradingClient::with_base_url(test_credentials(), &server.uri())?;
+    let mint = client
+        .mint_tokenized_asset(
+            &TokenizationMintRequest {
+                underlying_symbol: "AAPL".into(),
+                qty: Decimal::new(3, 0),
+                issuer: TokenizationIssuer::XStocks,
+                network: TokenizationNetwork::Solana,
+                wallet_address: "5dXY1aH2tQpV3wXmJg6Z7c8B4nKvF9bA1pQrSt2uVwYxXz".into(),
+                client_request_id: Some("my-mint-ref-001".into()),
+            },
+            Some("mint-key-123"),
+        )
+        .await?;
+
+    assert_eq!(
+        mint.tokenization_request_id,
+        "14d484e3-46f9-4e11-99ac-6fee0d4455c7"
+    );
+    assert_eq!(mint.status, TokenizationRequestStatus::Pending);
+    assert_eq!(mint.client_request_id.as_deref(), Some("my-mint-ref-001"));
+
+    server.verify().await;
+    Ok(())
+}
+
+#[tokio::test]
+async fn get_tokenization_requests_lists_and_filters() -> Result<()> {
+    let server = MockServer::start().await;
+
+    auth(Mock::given(method("GET")))
+        .and(path("/v2/tokenization/requests"))
+        .and(query_param("type", "mint"))
+        .and(query_param("underlying_symbol", "TSLA"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_raw(format!("[{TOKENIZATION_REQUEST_JSON}]"), "application/json"),
+        )
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let client = TradingClient::with_base_url(test_credentials(), &server.uri())?;
+    let requests = client
+        .get_tokenization_requests(&GetTokenizationRequestsRequest {
+            request_type: Some(TokenizationRequestType::Mint),
+            underlying_symbol: Some("TSLA".into()),
+            ..Default::default()
+        })
+        .await?;
+
+    assert_eq!(requests.len(), 1);
+    assert_eq!(requests[0].request_type, TokenizationRequestType::Mint);
+    assert_eq!(requests[0].status, TokenizationRequestStatus::Completed);
+    assert_eq!(requests[0].qty, Decimal::new(10, 1));
+
+    server.verify().await;
+    Ok(())
+}
+
+#[tokio::test]
+async fn get_tokenization_request_by_client_request_id_uses_colon_path() -> Result<()> {
+    let server = MockServer::start().await;
+
+    // The colon in the path is intentional and must not be percent-encoded.
+    auth(Mock::given(method("GET")))
+        .and(path("/v2/tokenization/requests:by_client_request_id"))
+        .and(query_param("client_request_id", "my-mint-ref-001"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_raw(TOKENIZATION_REQUEST_JSON, "application/json"),
+        )
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let client = TradingClient::with_base_url(test_credentials(), &server.uri())?;
+    let request = client
+        .get_tokenization_request_by_client_request_id("my-mint-ref-001")
+        .await?;
+
+    assert_eq!(
+        request.tokenization_request_id,
+        "5b1d6a3e-7f0a-4d2c-b8e1-9e6f1c0d2c4a"
+    );
+    assert_eq!(request.issuer, TokenizationIssuer::XStocks);
 
     server.verify().await;
     Ok(())

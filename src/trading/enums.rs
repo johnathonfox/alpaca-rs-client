@@ -146,6 +146,10 @@ pub enum AssetClass {
     UsOption,
     /// Crypto.
     Crypto,
+    /// Crypto perpetual futures (beta). Perp orders go through the standard
+    /// `POST /v2/orders`, and perp assets are listed via
+    /// `GET /v2/assets?asset_class=crypto_perp`.
+    CryptoPerp,
 }
 
 /// The status of an asset.
@@ -681,6 +685,182 @@ pub enum NonTradeActivityStatus {
     Canceled,
 }
 
+/// A blockchain network used by the crypto wallets/funding and perpetuals
+/// endpoints. Wire values are screaming case (e.g. `"SOL"`).
+///
+/// Alpaca adds chains over time, so an unrecognized value parses into
+/// [`Other`](Self::Other) rather than failing the whole response.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum CryptoChain {
+    /// Solana.
+    #[serde(rename = "SOL")]
+    Sol,
+    /// Ethereum.
+    #[serde(rename = "ETH")]
+    Eth,
+    /// Bitcoin.
+    #[serde(rename = "BTC")]
+    Btc,
+    /// XRP Ledger.
+    #[serde(rename = "XRP")]
+    Xrp,
+    /// Arbitrum.
+    #[serde(rename = "ARB")]
+    Arb,
+    /// A chain added by the API after this crate was released.
+    #[serde(untagged)]
+    Other(String),
+}
+
+impl CryptoChain {
+    /// The chain as it appears on the wire (e.g. `"SOL"`).
+    pub fn as_str(&self) -> &str {
+        match self {
+            Self::Sol => "SOL",
+            Self::Eth => "ETH",
+            Self::Btc => "BTC",
+            Self::Xrp => "XRP",
+            Self::Arb => "ARB",
+            Self::Other(value) => value,
+        }
+    }
+}
+
+/// The direction of a crypto wallet transfer.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum CryptoTransferDirection {
+    /// Funds moving into the Alpaca account.
+    Incoming,
+    /// Funds moving out of the Alpaca account.
+    Outgoing,
+    /// A direction added by the API after this crate was released.
+    #[serde(untagged)]
+    Other(String),
+}
+
+/// The status of a crypto wallet transfer.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum CryptoTransferStatus {
+    /// The transfer is being processed.
+    Processing,
+    /// The transfer failed.
+    Failed,
+    /// The transfer completed.
+    Complete,
+    /// A status added by the API after this crate was released.
+    #[serde(untagged)]
+    Other(String),
+}
+
+/// The approval status of a whitelisted crypto address.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum WhitelistStatus {
+    /// The address is approved and can receive transfers.
+    Approved,
+    /// The address is pending review.
+    Pending,
+    /// A status added by the API after this crate was released.
+    #[serde(untagged)]
+    Other(String),
+}
+
+/// The issuer of a tokenized asset (wire values are lowercase, e.g.
+/// `"xstocks"`).
+///
+/// The published issuer list has grown between spec versions, so an
+/// unrecognized value parses into [`Other`](Self::Other) rather than failing.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum TokenizationIssuer {
+    /// xStocks (Backed Finance).
+    #[serde(rename = "xstocks")]
+    XStocks,
+    /// ST0X.
+    #[serde(rename = "st0x")]
+    St0x,
+    /// Binance.
+    #[serde(rename = "binance")]
+    Binance,
+    /// Coinbase.
+    #[serde(rename = "coinbase")]
+    Coinbase,
+    /// An issuer added by the API after this crate was released.
+    #[serde(untagged)]
+    Other(String),
+}
+
+/// The network a tokenized asset is minted on (wire values are lowercase,
+/// e.g. `"solana"`).
+///
+/// The published network list has grown between spec versions, so an
+/// unrecognized value parses into [`Other`](Self::Other) rather than failing.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum TokenizationNetwork {
+    /// Solana.
+    #[serde(rename = "solana")]
+    Solana,
+    /// Arbitrum.
+    #[serde(rename = "arbitrum")]
+    Arbitrum,
+    /// Ethereum.
+    #[serde(rename = "ethereum")]
+    Ethereum,
+    /// Binance.
+    #[serde(rename = "binance")]
+    Binance,
+    /// Base.
+    #[serde(rename = "base")]
+    Base,
+    /// TON.
+    #[serde(rename = "ton")]
+    Ton,
+    /// Tron.
+    #[serde(rename = "tron")]
+    Tron,
+    /// Mantle.
+    #[serde(rename = "mantle")]
+    Mantle,
+    /// Cronos.
+    #[serde(rename = "cronos")]
+    Cronos,
+    /// HyperEVM.
+    #[serde(rename = "hyperevm")]
+    HyperEvm,
+    /// A network added by the API after this crate was released.
+    #[serde(untagged)]
+    Other(String),
+}
+
+/// The kind of a tokenization request (serialized as `type`).
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TokenizationRequestType {
+    /// Minting new tokenized assets.
+    Mint,
+    /// Redeeming tokenized assets for the underlying.
+    Redeem,
+    /// A type added by the API after this crate was released.
+    #[serde(untagged)]
+    Other(String),
+}
+
+/// The lifecycle status of a tokenization request.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TokenizationRequestStatus {
+    /// The request is pending.
+    Pending,
+    /// The request was rejected.
+    Rejected,
+    /// The request completed.
+    Completed,
+    /// A status added by the API after this crate was released.
+    #[serde(untagged)]
+    Other(String),
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -868,6 +1048,104 @@ mod tests {
         assert_eq!(
             serde_json::from_str::<BorrowStatus>("\"not_borrowable\"").unwrap(),
             BorrowStatus::Other("not_borrowable".into())
+        );
+    }
+
+    #[test]
+    fn asset_class_includes_crypto_perp() {
+        assert_eq!(
+            serde_json::to_string(&AssetClass::CryptoPerp).unwrap(),
+            "\"crypto_perp\""
+        );
+        assert_eq!(
+            serde_json::from_str::<AssetClass>("\"crypto_perp\"").unwrap(),
+            AssetClass::CryptoPerp
+        );
+    }
+
+    #[test]
+    fn crypto_chain_serde_and_forward_compat() {
+        assert_eq!(serde_json::to_string(&CryptoChain::Sol).unwrap(), "\"SOL\"");
+        assert_eq!(
+            serde_json::from_str::<CryptoChain>("\"ETH\"").unwrap(),
+            CryptoChain::Eth
+        );
+        assert_eq!(
+            serde_json::from_str::<CryptoChain>("\"ARB\"").unwrap(),
+            CryptoChain::Arb
+        );
+
+        let unknown: CryptoChain = serde_json::from_str("\"DOGE\"").unwrap();
+        assert_eq!(unknown, CryptoChain::Other("DOGE".into()));
+        assert_eq!(serde_json::to_string(&unknown).unwrap(), "\"DOGE\"");
+
+        for chain in [CryptoChain::Btc, CryptoChain::Xrp, unknown] {
+            let json = serde_json::to_string(&chain).unwrap();
+            assert_eq!(json.trim_matches('"'), chain.as_str());
+        }
+    }
+
+    #[test]
+    fn crypto_transfer_enums_are_screaming_case_with_catch_all() {
+        assert_eq!(
+            serde_json::to_string(&CryptoTransferDirection::Incoming).unwrap(),
+            "\"INCOMING\""
+        );
+        assert_eq!(
+            serde_json::from_str::<CryptoTransferStatus>("\"COMPLETE\"").unwrap(),
+            CryptoTransferStatus::Complete
+        );
+        assert_eq!(
+            serde_json::from_str::<CryptoTransferStatus>("\"CANCELLED\"").unwrap(),
+            CryptoTransferStatus::Other("CANCELLED".into())
+        );
+        assert_eq!(
+            serde_json::to_string(&WhitelistStatus::Pending).unwrap(),
+            "\"PENDING\""
+        );
+        assert_eq!(
+            serde_json::from_str::<WhitelistStatus>("\"REJECTED\"").unwrap(),
+            WhitelistStatus::Other("REJECTED".into())
+        );
+    }
+
+    #[test]
+    fn tokenization_enums_serde_and_forward_compat() {
+        assert_eq!(
+            serde_json::to_string(&TokenizationIssuer::XStocks).unwrap(),
+            "\"xstocks\""
+        );
+        assert_eq!(
+            serde_json::from_str::<TokenizationIssuer>("\"st0x\"").unwrap(),
+            TokenizationIssuer::St0x
+        );
+        assert_eq!(
+            serde_json::to_string(&TokenizationNetwork::HyperEvm).unwrap(),
+            "\"hyperevm\""
+        );
+        assert_eq!(
+            serde_json::from_str::<TokenizationNetwork>("\"solana\"").unwrap(),
+            TokenizationNetwork::Solana
+        );
+        assert_eq!(
+            serde_json::from_str::<TokenizationRequestType>("\"mint\"").unwrap(),
+            TokenizationRequestType::Mint
+        );
+        assert_eq!(
+            serde_json::from_str::<TokenizationRequestStatus>("\"completed\"").unwrap(),
+            TokenizationRequestStatus::Completed
+        );
+
+        // Values added after this crate was released still round-trip.
+        let issuer: TokenizationIssuer = serde_json::from_str("\"kraken\"").unwrap();
+        assert_eq!(issuer, TokenizationIssuer::Other("kraken".into()));
+        assert_eq!(serde_json::to_string(&issuer).unwrap(), "\"kraken\"");
+        let network: TokenizationNetwork = serde_json::from_str("\"polygon\"").unwrap();
+        assert_eq!(network, TokenizationNetwork::Other("polygon".into()));
+        let status: TokenizationRequestStatus = serde_json::from_str("\"processing\"").unwrap();
+        assert_eq!(
+            status,
+            TokenizationRequestStatus::Other("processing".into())
         );
     }
 }

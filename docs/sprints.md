@@ -1,7 +1,8 @@
 # Sprint Plan — alpaca-rs parity with alpaca-py (trading + data + streams)
 
 Wave 1 (below) is complete. Wave 2 (beyond-parity additions) is planned in
-[docs/sprints-wave2.md](sprints-wave2.md).
+[docs/sprints-wave2.md](sprints-wave2.md), wave 3 (deferred-scope coverage)
+in [docs/sprints-wave3.md](sprints-wave3.md).
 
 Reference: [ADR 0001](adr/0001-alpaca-py-parity-scope-and-architecture.md).
 Each sprint is one subagent-sized chunk: independent, reviewable, and verifiable

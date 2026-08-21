@@ -1069,6 +1069,109 @@ pub type ConditionsResponse = HashMap<String, String>;
 /// not a wrapper object.
 pub type ExchangesResponse = HashMap<String, String>;
 
+/// A latest fixed-income price (`GET /v1beta1/fixed_income/latest/prices`).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct FixedIncomePrice {
+    /// Price timestamp (RFC3339).
+    #[serde(rename = "t")]
+    pub timestamp: DateTime<Utc>,
+    /// Price as a percentage of par.
+    #[serde(rename = "p")]
+    pub price: f64,
+    /// Yield to maturity, when reported.
+    #[serde(rename = "ytm")]
+    pub yield_to_maturity: Option<f64>,
+    /// Yield to worst, when reported.
+    #[serde(rename = "ytw")]
+    pub yield_to_worst: Option<f64>,
+}
+
+/// Latest fixed-income prices keyed by ISIN.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct FixedIncomeLatestPricesResponse {
+    /// Latest price per ISIN.
+    pub prices: HashMap<String, FixedIncomePrice>,
+}
+
+/// A latest fixed-income quote (`GET /v1beta1/fixed_income/latest/quotes`).
+///
+/// A `0` in the price or size fields means there is no active bid/ask on
+/// that side.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct FixedIncomeQuote {
+    /// Quote timestamp (RFC3339).
+    #[serde(rename = "t")]
+    pub timestamp: DateTime<Utc>,
+    /// Bid price as a percentage of par.
+    #[serde(rename = "bp")]
+    pub bid_price: f64,
+    /// Bid size.
+    #[serde(rename = "bs")]
+    pub bid_size: i64,
+    /// Bid minimum trade size.
+    #[serde(rename = "bms")]
+    pub bid_min_size: i64,
+    /// Bid yield to maturity, when reported.
+    #[serde(rename = "bytm")]
+    pub bid_yield_to_maturity: Option<f64>,
+    /// Bid yield to worst, when reported.
+    #[serde(rename = "bytw")]
+    pub bid_yield_to_worst: Option<f64>,
+    /// Ask price as a percentage of par.
+    #[serde(rename = "ap")]
+    pub ask_price: f64,
+    /// Ask size.
+    #[serde(rename = "as")]
+    pub ask_size: i64,
+    /// Ask minimum trade size.
+    #[serde(rename = "ams")]
+    pub ask_min_size: i64,
+    /// Ask yield to maturity, when reported.
+    #[serde(rename = "aytm")]
+    pub ask_yield_to_maturity: Option<f64>,
+    /// Ask yield to worst, when reported.
+    #[serde(rename = "aytw")]
+    pub ask_yield_to_worst: Option<f64>,
+}
+
+/// Latest fixed-income quotes keyed by ISIN.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct FixedIncomeLatestQuotesResponse {
+    /// Latest quote per ISIN.
+    pub quotes: HashMap<String, FixedIncomeQuote>,
+}
+
+/// Latest pricing data of a crypto perpetual future
+/// (`GET /v1beta1/crypto-perps/global/latest/pricing`).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct CryptoPerpPricing {
+    /// Pricing timestamp (RFC3339).
+    #[serde(rename = "t")]
+    pub timestamp: DateTime<Utc>,
+    /// Next funding time (RFC3339).
+    #[serde(rename = "ft")]
+    pub funding_time: DateTime<Utc>,
+    /// Open interest.
+    #[serde(rename = "oi")]
+    pub open_interest: f64,
+    /// Index price.
+    #[serde(rename = "ip")]
+    pub index_price: f64,
+    /// Mark price.
+    #[serde(rename = "mp")]
+    pub mark_price: f64,
+    /// Funding rate.
+    #[serde(rename = "fr")]
+    pub funding_rate: f64,
+}
+
+/// Latest crypto-perp pricing keyed by symbol.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct CryptoPerpLatestPricingResponse {
+    /// Latest pricing per symbol.
+    pub pricing: HashMap<String, CryptoPerpPricing>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1643,5 +1746,99 @@ mod tests {
         let exchanges: ExchangesResponse =
             serde_json::from_str(r#"{"N": "New York Stock Exchange", "V": "IEX"}"#).unwrap();
         assert_eq!(exchanges["V"], "IEX");
+    }
+
+    #[test]
+    fn deserialize_fixed_income_latest_prices_response() {
+        // Verbatim fixture from the API docs.
+        let json = r#"{"prices":{"US912797KJ59":{"p":99.6459,"t":"2025-02-14T20:58:00.648Z","ytm":4.249,"ytw":4.249}}}"#;
+        let resp: FixedIncomeLatestPricesResponse = serde_json::from_str(json).unwrap();
+        let price = &resp.prices["US912797KJ59"];
+        assert_eq!(price.price, 99.6459);
+        assert_eq!(price.yield_to_maturity, Some(4.249));
+        assert_eq!(price.yield_to_worst, Some(4.249));
+
+        // Round-trip.
+        let serialized = serde_json::to_string(&resp).unwrap();
+        let again: FixedIncomeLatestPricesResponse = serde_json::from_str(&serialized).unwrap();
+        assert_eq!(resp, again);
+    }
+
+    #[test]
+    fn deserialize_fixed_income_latest_quotes_response() {
+        // Verbatim fixture from the API docs.
+        let json = r#"{"quotes":{"US912797SX61":{"ams":1000,"ap":99.91958333,"as":1000000,"aytm":2.226923,"aytw":2.226923,"bms":1000,"bp":99.81091667,"bs":1000000,"bytm":5.236154,"bytw":5.236154,"t":"2026-05-21T06:56:01.882466873Z"}}}"#;
+        let resp: FixedIncomeLatestQuotesResponse = serde_json::from_str(json).unwrap();
+        let quote = &resp.quotes["US912797SX61"];
+        assert_eq!(quote.bid_price, 99.81091667);
+        assert_eq!(quote.bid_size, 1_000_000);
+        assert_eq!(quote.bid_min_size, 1000);
+        assert_eq!(quote.ask_price, 99.91958333);
+        assert_eq!(quote.ask_size, 1_000_000);
+        assert_eq!(quote.ask_min_size, 1000);
+        assert_eq!(quote.bid_yield_to_maturity, Some(5.236154));
+        assert_eq!(quote.ask_yield_to_worst, Some(2.226923));
+
+        // Round-trip.
+        let serialized = serde_json::to_string(&resp).unwrap();
+        let again: FixedIncomeLatestQuotesResponse = serde_json::from_str(&serialized).unwrap();
+        assert_eq!(resp, again);
+    }
+
+    #[test]
+    fn deserialize_crypto_perp_latest_pricing_response() {
+        // Verbatim fixture from the API spec.
+        let json = r#"{"pricing":{"BTC-PERP":{"t":"2022-05-27T10:18:00Z","ft":"2022-05-27T10:18:00Z","oi":90.7367,"ip":50702.8,"mp":50652.3553,"fr":0.000565699}}}"#;
+        let resp: CryptoPerpLatestPricingResponse = serde_json::from_str(json).unwrap();
+        let pricing = &resp.pricing["BTC-PERP"];
+        assert_eq!(pricing.open_interest, 90.7367);
+        assert_eq!(pricing.index_price, 50702.8);
+        assert_eq!(pricing.mark_price, 50652.3553);
+        assert_eq!(pricing.funding_rate, 0.000565699);
+        assert_eq!(pricing.timestamp, pricing.funding_time);
+
+        // Round-trip.
+        let serialized = serde_json::to_string(&resp).unwrap();
+        let again: CryptoPerpLatestPricingResponse = serde_json::from_str(&serialized).unwrap();
+        assert_eq!(resp, again);
+    }
+
+    #[test]
+    fn crypto_perp_fixtures_fit_the_shared_crypto_models() {
+        // Verbatim fixtures from the API spec; the perp latest bars/trades/
+        // quotes/orderbooks endpoints reuse the shared crypto shapes.
+        let bars: LatestBarsResponse = serde_json::from_str(
+            r#"{"bars":{"BTC-PERP":{"t":"2022-05-27T10:18:00Z","o":28999,"h":29003,"l":28999,"c":29003,"v":0.01,"n":4,"vw":29001}}}"#,
+        )
+        .unwrap();
+        assert_eq!(bars.bars["BTC-PERP"].close, 29003.0);
+        assert_eq!(bars.bars["BTC-PERP"].trade_count, Some(4));
+
+        let trades: LatestTradesResponse = serde_json::from_str(
+            r#"{"trades":{"BTC-PERP":{"t":"2022-05-18T12:01:00.537052Z","p":29791,"s":0.0016,"tks":"S","i":31455289}}}"#,
+        )
+        .unwrap();
+        let trade = &trades.trades["BTC-PERP"];
+        assert_eq!(trade.price, 29791.0);
+        assert_eq!(trade.size, 0.0016);
+        assert_eq!(trade.id, Some(TradeId::Int(31455289)));
+
+        let quotes: LatestQuotesResponse = serde_json::from_str(
+            r#"{"quotes":{"BTC-PERP":{"t":"2022-05-26T11:47:18.44347136Z","bp":29058,"bs":0.3544,"ap":29059,"as":3.252}}}"#,
+        )
+        .unwrap();
+        let quote = &quotes.quotes["BTC-PERP"];
+        assert_eq!(quote.bid_price, 29058.0);
+        assert_eq!(quote.ask_size, 3.252);
+
+        let orderbooks: OrderbooksResponse = serde_json::from_str(
+            r#"{"orderbooks":{"BTC-PERP":{"t":"2022-06-24T08:00:14.137774336Z","b":[{"p":20846,"s":0.1902},{"p":20350,"s":0}],"a":[{"p":20902,"s":0.0097},{"p":21444,"s":0}]}}}"#,
+        )
+        .unwrap();
+        let book = &orderbooks.orderbooks["BTC-PERP"];
+        assert_eq!(book.bids.len(), 2);
+        assert_eq!(book.bids[0].price, 20846.0);
+        assert_eq!(book.asks[1].size, 0.0);
+        assert_eq!(orderbooks.next_page_token, None);
     }
 }

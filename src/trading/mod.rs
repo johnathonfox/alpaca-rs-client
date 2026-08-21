@@ -9,6 +9,9 @@ pub mod requests;
 
 mod activities;
 mod locates;
+mod perpetuals;
+mod tokenization;
+mod wallets;
 mod watchlists_by_name;
 
 pub use enums::*;

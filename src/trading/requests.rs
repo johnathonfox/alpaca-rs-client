@@ -9,8 +9,10 @@ use serde::{Serialize, Serializer};
 
 use super::enums::{
     ActivityType, AssetAttribute, AssetClass, AssetExchange, AssetStatus, CalendarTimezone,
-    ContractType, DTBPCheck, ExerciseStyle, LocateStatus, Market, OrderClass, OrderSide, OrderType,
-    PDTCheck, PositionIntent, QueryOrderStatus, TimeInForce, TradeConfirmationEmail,
+    ContractType, CryptoChain, DTBPCheck, ExerciseStyle, LocateStatus, Market, OrderClass,
+    OrderSide, OrderType, PDTCheck, PositionIntent, QueryOrderStatus, TimeInForce,
+    TokenizationIssuer, TokenizationNetwork, TokenizationRequestStatus, TokenizationRequestType,
+    TradeConfirmationEmail,
 };
 use crate::data::enums::Sort;
 use crate::error::{Error, Result};
@@ -260,6 +262,131 @@ pub struct GetOrdersRequest {
 pub struct GetOrderByClientIdRequest {
     /// The client order id.
     pub client_order_id: String,
+}
+
+/// Query parameters for listing crypto wallets (`GET /v2/wallets`). Also used
+/// by the perpetuals equivalent (`GET /v2/perpetuals/wallets`), which takes
+/// the asset filter only.
+///
+/// Quirk: with `asset` set, the endpoint answers with a single wallet object
+/// instead of an array; [`TradingClient::get_wallets`](super::TradingClient::get_wallets)
+/// absorbs both shapes.
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct GetWalletsRequest {
+    /// Asset filter (e.g. `"USDC"`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub asset: Option<String>,
+    /// Chain filter.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub chain: Option<CryptoChain>,
+}
+
+/// Body for creating a crypto wallet transfer (`POST /v2/wallets/transfers`).
+#[derive(Debug, Clone, Serialize)]
+pub struct CreateWalletTransferRequest {
+    /// Amount to transfer, in units of `asset`.
+    pub amount: Decimal,
+    /// Destination address.
+    pub address: String,
+    /// Asset to transfer (e.g. `"USDC"`).
+    pub asset: String,
+    /// Chain to transfer on.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub chain: Option<CryptoChain>,
+}
+
+/// Body for whitelisting a crypto address (`POST /v2/wallets/whitelists`).
+#[derive(Debug, Clone, Serialize)]
+pub struct CreateWhitelistedAddressRequest {
+    /// The address to whitelist.
+    pub address: String,
+    /// The asset the address is whitelisted for.
+    pub asset: String,
+    /// The chain of the address.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub chain: Option<CryptoChain>,
+}
+
+/// Query parameters for estimating a transfer fee
+/// (`GET /v2/wallets/fees/estimate`; also used by the perpetuals equivalent).
+#[derive(Debug, Clone, Serialize)]
+pub struct TransferFeeEstimateRequest {
+    /// Asset to transfer (e.g. `"USDC"`).
+    pub asset: String,
+    /// The sending address.
+    pub from_address: String,
+    /// The receiving address.
+    pub to_address: String,
+    /// Amount to transfer, in units of `asset`.
+    pub amount: Decimal,
+}
+
+/// Body for creating a crypto perpetuals wallet transfer
+/// (`POST /v2/perpetuals/wallets/transfers`).
+#[derive(Debug, Clone, Serialize)]
+pub struct CreatePerpTransferRequest {
+    /// Amount to transfer, in units of `asset`.
+    pub amount: Decimal,
+    /// Destination address.
+    pub address: String,
+    /// Asset to transfer (e.g. `"USDC"`).
+    pub asset: String,
+}
+
+/// Body for whitelisting a crypto perpetuals address
+/// (`POST /v2/perpetuals/wallets/whitelists`).
+#[derive(Debug, Clone, Serialize)]
+pub struct CreatePerpWhitelistedAddressRequest {
+    /// The address to whitelist.
+    pub address: String,
+    /// The asset the address is whitelisted for.
+    pub asset: String,
+}
+
+/// Body for minting a tokenized asset (`POST /v2/tokenization/mint`).
+#[derive(Debug, Clone, Serialize)]
+pub struct TokenizationMintRequest {
+    /// Symbol of the underlying asset (e.g. `"AAPL"`).
+    pub underlying_symbol: String,
+    /// Quantity to mint (at most 9 decimal places).
+    pub qty: Decimal,
+    /// Issuer of the tokenized asset.
+    pub issuer: TokenizationIssuer,
+    /// Network to mint on.
+    pub network: TokenizationNetwork,
+    /// Wallet address the minted tokens are delivered to.
+    pub wallet_address: String,
+    /// Client-provided idempotency reference (documented in the guide,
+    /// missing from the schema).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub client_request_id: Option<String>,
+}
+
+/// Query parameters for listing tokenization requests
+/// (`GET /v2/tokenization/requests`). All filters are optional.
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct GetTokenizationRequestsRequest {
+    /// Only mint or only redeem requests (serialized as `type`).
+    #[serde(rename = "type", skip_serializing_if = "Option::is_none")]
+    pub request_type: Option<TokenizationRequestType>,
+    /// Only requests in this status.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub status: Option<TokenizationRequestStatus>,
+    /// Only requests for this underlying symbol.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub underlying_symbol: Option<String>,
+    /// Only requests from this issuer.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub issuer: Option<TokenizationIssuer>,
+    /// Only requests on this network.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub network: Option<TokenizationNetwork>,
+    /// Only requests created after this time.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub after: Option<DateTime<Utc>>,
+    /// Only requests created before this time.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub before: Option<DateTime<Utc>>,
 }
 
 /// Query parameters for closing a single position.
@@ -1002,6 +1129,103 @@ mod tests {
 
         // An empty request serializes to an empty object.
         let empty = serde_json::to_value(GetLocatesRequest::default()).unwrap();
+        assert_eq!(empty, serde_json::json!({}));
+    }
+
+    #[test]
+    fn serialize_wallet_requests() {
+        let req = GetWalletsRequest {
+            asset: Some("USDC".into()),
+            chain: Some(CryptoChain::Eth),
+        };
+        let json = serde_json::to_value(&req).unwrap();
+        assert_eq!(json["asset"], "USDC");
+        assert_eq!(json["chain"], "ETH");
+        let empty = serde_json::to_value(GetWalletsRequest::default()).unwrap();
+        assert_eq!(empty, serde_json::json!({}));
+
+        let req = CreateWalletTransferRequest {
+            amount: Decimal::new(10, 0),
+            address: "0x42a76C83014e886e639768D84EAF3573b1876844".into(),
+            asset: "USDC".into(),
+            chain: None,
+        };
+        let json = serde_json::to_value(&req).unwrap();
+        // Trading-API numbers go out as JSON strings.
+        assert_eq!(json["amount"], "10");
+        assert_eq!(json["asset"], "USDC");
+        assert!(json.get("chain").is_none());
+
+        let req = CreateWhitelistedAddressRequest {
+            address: "0xf38Ecf5764fD2dEcB0dd9C1E7513a0b6eC0dD08a".into(),
+            asset: "USDC".into(),
+            chain: Some(CryptoChain::Eth),
+        };
+        let json = serde_json::to_value(&req).unwrap();
+        assert_eq!(json["chain"], "ETH");
+
+        let req = TransferFeeEstimateRequest {
+            asset: "USDC".into(),
+            from_address: "0x3C3380cdFb94dFEEaA41cAD9F58254AE380d752D".into(),
+            to_address: "0x42a76C83014e886e639768D84EAF3573b1876844".into(),
+            amount: Decimal::new(10, 0),
+        };
+        let json = serde_json::to_value(&req).unwrap();
+        assert_eq!(json["amount"], "10");
+        assert_eq!(json["asset"], "USDC");
+    }
+
+    #[test]
+    fn serialize_perp_requests() {
+        let req = CreatePerpTransferRequest {
+            amount: Decimal::new(25, 1),
+            address: "0x42a76C83014e886e639768D84EAF3573b1876844".into(),
+            asset: "USDC".into(),
+        };
+        let json = serde_json::to_value(&req).unwrap();
+        assert_eq!(json["amount"], "2.5");
+        assert_eq!(json["asset"], "USDC");
+
+        let req = CreatePerpWhitelistedAddressRequest {
+            address: "0xf38Ecf5764fD2dEcB0dd9C1E7513a0b6eC0dD08a".into(),
+            asset: "USDC".into(),
+        };
+        let json = serde_json::to_value(&req).unwrap();
+        assert_eq!(
+            json["address"],
+            "0xf38Ecf5764fD2dEcB0dd9C1E7513a0b6eC0dD08a"
+        );
+        assert_eq!(json["asset"], "USDC");
+    }
+
+    #[test]
+    fn serialize_tokenization_requests() {
+        let req = TokenizationMintRequest {
+            underlying_symbol: "AAPL".into(),
+            qty: Decimal::new(3, 0),
+            issuer: TokenizationIssuer::XStocks,
+            network: TokenizationNetwork::Solana,
+            wallet_address: "5dXY1aH2tQpV3wXmJg6Z7c8B4nKvF9bA1pQrSt2uVwYxXz".into(),
+            client_request_id: Some("my-mint-ref-001".into()),
+        };
+        let json = serde_json::to_value(&req).unwrap();
+        assert_eq!(json["underlying_symbol"], "AAPL");
+        assert_eq!(json["qty"], "3");
+        assert_eq!(json["issuer"], "xstocks");
+        assert_eq!(json["network"], "solana");
+        assert_eq!(json["client_request_id"], "my-mint-ref-001");
+
+        // The type filter is serialized under the `type` key.
+        let req = GetTokenizationRequestsRequest {
+            request_type: Some(TokenizationRequestType::Mint),
+            status: Some(TokenizationRequestStatus::Completed),
+            ..Default::default()
+        };
+        let json = serde_json::to_value(&req).unwrap();
+        assert_eq!(json["type"], "mint");
+        assert_eq!(json["status"], "completed");
+        assert!(json.get("issuer").is_none());
+        let empty = serde_json::to_value(GetTokenizationRequestsRequest::default()).unwrap();
         assert_eq!(empty, serde_json::json!({}));
     }
 }
