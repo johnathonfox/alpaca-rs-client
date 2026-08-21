@@ -102,8 +102,24 @@ pub struct AccountConfigurations {
     pub max_options_trading_level: Option<u32>,
 }
 
+/// Deserializes an optional value where the API emits `""` instead of `null`
+/// (observed live: `order_class` on equity orders).
+fn empty_string_as_none<'de, D, T>(deserializer: D) -> std::result::Result<Option<T>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: Deserialize<'de>,
+{
+    match Option::<String>::deserialize(deserializer)? {
+        None => Ok(None),
+        Some(raw) if raw.is_empty() => Ok(None),
+        Some(raw) => {
+            T::deserialize(serde::de::value::StrDeserializer::<D::Error>::new(&raw)).map(Some)
+        }
+    }
+}
+
 /// An order.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct Order {
     /// Order id.
     pub id: String,
@@ -144,9 +160,11 @@ pub struct Order {
     /// Filled average price.
     pub filled_avg_price: Option<Decimal>,
     /// Order class.
+    #[serde(default, deserialize_with = "empty_string_as_none")]
     pub order_class: Option<OrderClass>,
-    /// Order type (accepts both the legacy `type` key and `order_type`).
-    #[serde(rename = "type", alias = "order_type")]
+    /// Order type (accepts both the legacy `type` key and `order_type`;
+    /// serialized as `type`).
+    #[serde(rename = "type")]
     pub order_type: OrderType,
     /// Order side.
     pub side: OrderSide,
@@ -168,6 +186,93 @@ pub struct Order {
     pub trail_price: Option<Decimal>,
     /// High water mark of a trailing stop order.
     pub hwm: Option<String>,
+}
+
+/// Wire shape of [`Order`]. Observed live, order payloads carry **both**
+/// `type` and `order_type` (with the same value), so serde's `alias` — which
+/// errors on duplicate fields — cannot be used; both keys are captured here
+/// and merged in [`Order`]'s `Deserialize` impl.
+#[derive(Deserialize)]
+struct OrderWire {
+    id: String,
+    client_order_id: String,
+    created_at: Option<DateTime<Utc>>,
+    updated_at: Option<DateTime<Utc>>,
+    submitted_at: Option<DateTime<Utc>>,
+    filled_at: Option<DateTime<Utc>>,
+    expired_at: Option<DateTime<Utc>>,
+    canceled_at: Option<DateTime<Utc>>,
+    failed_at: Option<DateTime<Utc>>,
+    replaced_at: Option<DateTime<Utc>>,
+    replaced_by: Option<String>,
+    replaces: Option<String>,
+    asset_id: String,
+    symbol: String,
+    asset_class: AssetClass,
+    notional: Option<Decimal>,
+    qty: Option<Decimal>,
+    filled_qty: Option<Decimal>,
+    filled_avg_price: Option<Decimal>,
+    #[serde(default, deserialize_with = "empty_string_as_none")]
+    order_class: Option<OrderClass>,
+    #[serde(rename = "type")]
+    legacy_order_type: Option<OrderType>,
+    order_type: Option<OrderType>,
+    side: OrderSide,
+    time_in_force: TimeInForce,
+    limit_price: Option<Decimal>,
+    stop_price: Option<Decimal>,
+    status: OrderStatus,
+    extended_hours: bool,
+    legs: Option<Vec<Order>>,
+    trail_percent: Option<Decimal>,
+    trail_price: Option<Decimal>,
+    hwm: Option<String>,
+}
+
+impl<'de> Deserialize<'de> for Order {
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let wire = OrderWire::deserialize(deserializer)?;
+        Ok(Order {
+            id: wire.id,
+            client_order_id: wire.client_order_id,
+            created_at: wire.created_at,
+            updated_at: wire.updated_at,
+            submitted_at: wire.submitted_at,
+            filled_at: wire.filled_at,
+            expired_at: wire.expired_at,
+            canceled_at: wire.canceled_at,
+            failed_at: wire.failed_at,
+            replaced_at: wire.replaced_at,
+            replaced_by: wire.replaced_by,
+            replaces: wire.replaces,
+            asset_id: wire.asset_id,
+            symbol: wire.symbol,
+            asset_class: wire.asset_class,
+            notional: wire.notional,
+            qty: wire.qty,
+            filled_qty: wire.filled_qty,
+            filled_avg_price: wire.filled_avg_price,
+            order_class: wire.order_class,
+            order_type: wire
+                .legacy_order_type
+                .or(wire.order_type)
+                .ok_or_else(|| <D::Error as serde::de::Error>::missing_field("type"))?,
+            side: wire.side,
+            time_in_force: wire.time_in_force,
+            limit_price: wire.limit_price,
+            stop_price: wire.stop_price,
+            status: wire.status,
+            extended_hours: wire.extended_hours,
+            legs: wire.legs,
+            trail_percent: wire.trail_percent,
+            trail_price: wire.trail_price,
+            hwm: wire.hwm,
+        })
+    }
 }
 
 /// A position in an asset.
@@ -520,8 +625,10 @@ pub struct CloseAllPositionsResult {
     pub status: Option<u16>,
     /// Symbol of the position.
     pub symbol: Option<String>,
-    /// The closed position, when the close succeeded.
-    pub body: Option<Position>,
+    /// Response body of the close attempt. Observed live: on success this is
+    /// the liquidation **order** object (not a position); on failure it is an
+    /// error payload — hence an untyped value.
+    pub body: Option<serde_json::Value>,
     /// API error code, when the close failed.
     pub code: Option<i64>,
     /// API error message, when the close failed.
@@ -746,6 +853,90 @@ mod tests {
         assert_eq!(order.order_type, OrderType::Market);
         assert_eq!(order.side, OrderSide::Buy);
         assert_eq!(order.order_class, Some(OrderClass::Simple));
+    }
+
+    #[test]
+    fn deserialize_order_with_empty_order_class() {
+        // Observed on the live wire: equity orders carry `order_class: ""`
+        // and both `type` and `order_type` keys with the same value.
+        let json = r#"{
+            "id": "61e69015-8549-4bfd-b9c3-01e75843f47d",
+            "client_order_id": "eb9e2aaa-f71a-4f51-b5b4-52a6c565dad4",
+            "created_at": "2024-07-24T07:56:53.123456789Z",
+            "updated_at": "2024-07-24T07:56:53.123456789Z",
+            "submitted_at": "2024-07-24T07:56:53.123456789Z",
+            "filled_at": null,
+            "expired_at": null,
+            "canceled_at": null,
+            "failed_at": null,
+            "replaced_at": null,
+            "replaced_by": null,
+            "replaces": null,
+            "asset_id": "b0b6dd9d-8b9b-48a9-ba46-b9d54906e415",
+            "symbol": "AAPL",
+            "asset_class": "us_equity",
+            "notional": null,
+            "qty": "1",
+            "filled_qty": "0",
+            "filled_avg_price": null,
+            "order_class": "",
+            "type": "market",
+            "order_type": "market",
+            "side": "buy",
+            "time_in_force": "day",
+            "limit_price": null,
+            "stop_price": null,
+            "status": "accepted",
+            "extended_hours": false,
+            "legs": null,
+            "trail_percent": null,
+            "trail_price": null,
+            "hwm": null
+        }"#;
+        let order: Order = serde_json::from_str(json).unwrap();
+        assert_eq!(order.order_class, None);
+        assert_eq!(order.order_type, OrderType::Market);
+        assert_eq!(order.symbol, "AAPL");
+    }
+
+    #[test]
+    fn deserialize_order_with_only_order_type_key() {
+        // The `order_type` key alone (no legacy `type`) must also parse.
+        let json = r#"{
+            "id": "61e69015-8549-4bfd-b9c3-01e75843f47d",
+            "client_order_id": "eb9e2aaa-f71a-4f51-b5b4-52a6c565dad4",
+            "created_at": "2024-07-24T07:56:53.123456789Z",
+            "updated_at": null,
+            "submitted_at": null,
+            "filled_at": null,
+            "expired_at": null,
+            "canceled_at": null,
+            "failed_at": null,
+            "replaced_at": null,
+            "replaced_by": null,
+            "replaces": null,
+            "asset_id": "b0b6dd9d-8b9b-48a9-ba46-b9d54906e415",
+            "symbol": "AAPL",
+            "asset_class": "us_equity",
+            "notional": null,
+            "qty": "1",
+            "filled_qty": "0",
+            "filled_avg_price": null,
+            "order_class": null,
+            "order_type": "limit",
+            "side": "sell",
+            "time_in_force": "gtc",
+            "limit_price": "150.0",
+            "stop_price": null,
+            "status": "new",
+            "extended_hours": false,
+            "legs": null,
+            "trail_percent": null,
+            "trail_price": null,
+            "hwm": null
+        }"#;
+        let order: Order = serde_json::from_str(json).unwrap();
+        assert_eq!(order.order_type, OrderType::Limit);
     }
 
     #[test]
