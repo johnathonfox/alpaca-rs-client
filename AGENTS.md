@@ -69,7 +69,8 @@ pass cleanly.
 - `live.yml` — manual-only run of the live test suites (needs the
   `APCA_API_KEY_ID` / `APCA_API_SECRET_KEY` secrets; paper keys).
 - Dependabot (`.github/dependabot.yml`) — weekly Cargo and GitHub Actions
-  dependency PRs.
+  dependency PRs; `dependabot-auto-merge.yml` approves and squash-merges them
+  once CI passes.
 
 ## Conventions
 
