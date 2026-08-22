@@ -97,7 +97,7 @@ async fn trading_stream_smoke() -> Result<()> {
     let credentials = credentials_or_skip!();
     println!("trading stream (paper):");
 
-    let mut stream = match TradingStream::connect(true, &credentials).await {
+    let mut stream = match TradingStream::paper(&credentials).await {
         Ok(stream) => stream,
         Err(err) => {
             println!("  NOTE     connect/auth rejected: {err}");

@@ -128,29 +128,42 @@ async fn read_json(ws: &mut Ws) -> Result<serde_json::Value> {
 /// Trading updates WebSocket stream client.
 pub struct TradingStream {
     ws: Ws,
-    url: &'static str,
+    url: String,
     creds: Credentials,
     listening: bool,
     reconnect: Option<ReconnectOptions>,
 }
 
 impl TradingStream {
-    /// Connects and authenticates to the trading stream. `paper: true`
-    /// targets the paper trading environment.
-    pub async fn connect(paper: bool, creds: &Credentials) -> Result<Self> {
-        let url = if paper { PAPER_STREAM } else { LIVE_STREAM };
+    /// Connects and authenticates to an arbitrary trading stream URL.
+    ///
+    /// This is the URL-override entry point (parity with alpaca-py's
+    /// `url_override`): pass a `ws(s)://` URL to target a mock server or a
+    /// non-default endpoint. Prefer [`TradingStream::paper`] or
+    /// [`TradingStream::live`] for the standard Alpaca environments.
+    pub async fn connect(url: &str, creds: &Credentials) -> Result<Self> {
         let ws = Self::handshake(url, creds).await?;
         Ok(Self {
             ws,
-            url,
+            url: url.to_string(),
             creds: creds.clone(),
             listening: false,
             reconnect: None,
         })
     }
 
+    /// Connects to the paper trading stream.
+    pub async fn paper(creds: &Credentials) -> Result<Self> {
+        Self::connect(PAPER_STREAM, creds).await
+    }
+
+    /// Connects to the live trading stream.
+    pub async fn live(creds: &Credentials) -> Result<Self> {
+        Self::connect(LIVE_STREAM, creds).await
+    }
+
     /// Performs the connect/auth handshake against `url`.
-    async fn handshake(url: &'static str, creds: &Credentials) -> Result<Ws> {
+    async fn handshake(url: &str, creds: &Credentials) -> Result<Ws> {
         let mut request = url.into_client_request()?;
         request.headers_mut().insert(
             http::header::CONTENT_TYPE,
@@ -233,7 +246,7 @@ impl TradingStream {
         let mut backoff = options.initial_backoff;
         let mut last_error = Error::StreamClosed;
         for attempt in 1..=options.max_attempts {
-            match Self::handshake(self.url, &self.creds).await {
+            match Self::handshake(&self.url, &self.creds).await {
                 Ok(ws) => {
                     self.ws = ws;
                     if self.listening {
@@ -309,53 +322,54 @@ mod tests {
     use super::*;
     use crate::trading::OrderStatus;
 
+    const TRADE_UPDATE_JSON: &str = r#"{
+        "stream": "trade_updates",
+        "data": {
+            "event": "fill",
+            "execution_id": "9a1b2c3d-0000-4000-8000-000000000001",
+            "order": {
+                "id": "61e69015-8549-4bfd-b9c3-01e75843f47d",
+                "client_order_id": "eb9e2aaa-f71a-4f51-b5b4-52a6c565dad4",
+                "created_at": "2024-07-24T07:56:53.123456Z",
+                "updated_at": "2024-07-24T07:57:00.123456Z",
+                "submitted_at": "2024-07-24T07:56:53.123456Z",
+                "filled_at": "2024-07-24T07:56:55.123456Z",
+                "expired_at": null,
+                "canceled_at": null,
+                "failed_at": null,
+                "replaced_at": null,
+                "replaced_by": null,
+                "replaces": null,
+                "asset_id": "b0b6dd9d-8b9b-48a9-ba46-b9d54906e415",
+                "symbol": "AAPL",
+                "asset_class": "us_equity",
+                "notional": null,
+                "qty": "1790.86",
+                "filled_qty": "1790.86",
+                "filled_avg_price": "105.89",
+                "order_class": "simple",
+                "type": "market",
+                "side": "buy",
+                "time_in_force": "day",
+                "limit_price": null,
+                "stop_price": null,
+                "status": "filled",
+                "extended_hours": false,
+                "legs": null,
+                "trail_percent": null,
+                "trail_price": null,
+                "hwm": null
+            },
+            "timestamp": "2024-07-24T07:56:55.123456Z",
+            "price": "105.89",
+            "qty": "1790.86",
+            "position_qty": "0"
+        }
+    }"#;
+
     #[test]
     fn parse_trade_update() {
-        let json = r#"{
-            "stream": "trade_updates",
-            "data": {
-                "event": "fill",
-                "execution_id": "9a1b2c3d-0000-4000-8000-000000000001",
-                "order": {
-                    "id": "61e69015-8549-4bfd-b9c3-01e75843f47d",
-                    "client_order_id": "eb9e2aaa-f71a-4f51-b5b4-52a6c565dad4",
-                    "created_at": "2024-07-24T07:56:53.123456Z",
-                    "updated_at": "2024-07-24T07:57:00.123456Z",
-                    "submitted_at": "2024-07-24T07:56:53.123456Z",
-                    "filled_at": "2024-07-24T07:56:55.123456Z",
-                    "expired_at": null,
-                    "canceled_at": null,
-                    "failed_at": null,
-                    "replaced_at": null,
-                    "replaced_by": null,
-                    "replaces": null,
-                    "asset_id": "b0b6dd9d-8b9b-48a9-ba46-b9d54906e415",
-                    "symbol": "AAPL",
-                    "asset_class": "us_equity",
-                    "notional": null,
-                    "qty": "1790.86",
-                    "filled_qty": "1790.86",
-                    "filled_avg_price": "105.89",
-                    "order_class": "simple",
-                    "type": "market",
-                    "side": "buy",
-                    "time_in_force": "day",
-                    "limit_price": null,
-                    "stop_price": null,
-                    "status": "filled",
-                    "extended_hours": false,
-                    "legs": null,
-                    "trail_percent": null,
-                    "trail_price": null,
-                    "hwm": null
-                },
-                "timestamp": "2024-07-24T07:56:55.123456Z",
-                "price": "105.89",
-                "qty": "1790.86",
-                "position_qty": "0"
-            }
-        }"#;
-        let value: serde_json::Value = serde_json::from_str(json).unwrap();
+        let value: serde_json::Value = serde_json::from_str(TRADE_UPDATE_JSON).unwrap();
         assert_eq!(value["stream"], "trade_updates");
         let update: TradeUpdate = serde_json::from_value(value["data"].clone()).unwrap();
         assert_eq!(update.event, TradeEvent::Fill);
@@ -380,5 +394,74 @@ mod tests {
             Some(StreamEvent::Other(value))
         };
         assert!(matches!(event, Some(StreamEvent::Other(_))));
+    }
+
+    /// A minimal mock trading-stream server: expects `auth` then `listen`,
+    /// answers both, then sends one trade update and closes.
+    async fn serve_once(listener: tokio::net::TcpListener) {
+        type ServerWs = WebSocketStream<tokio::net::TcpStream>;
+
+        async fn read_frame(ws: &mut ServerWs) -> serde_json::Value {
+            match ws.next().await {
+                Some(Ok(Message::Text(text))) => {
+                    serde_json::from_str::<serde_json::Value>(text.as_str()).unwrap()
+                }
+                other => panic!("expected a text frame, got: {other:?}"),
+            }
+        }
+        async fn send_frame(ws: &mut ServerWs, text: &str) {
+            ws.send(Message::Text(text.into())).await.unwrap();
+        }
+
+        let (tcp, _) = listener.accept().await.unwrap();
+        let mut ws = tokio_tungstenite::accept_async(tcp).await.unwrap();
+
+        let auth = read_frame(&mut ws).await;
+        assert_eq!(auth["action"], "auth");
+        assert_eq!(auth["key"], "key-id");
+        assert_eq!(auth["secret"], "secret");
+        send_frame(
+            &mut ws,
+            r#"{"stream":"authorization","data":{"status":"authorized"}}"#,
+        )
+        .await;
+
+        let listen = read_frame(&mut ws).await;
+        assert_eq!(listen["action"], "listen");
+        assert_eq!(listen["data"]["streams"][0], "trade_updates");
+        send_frame(
+            &mut ws,
+            r#"{"stream":"listening","data":{"streams":["trade_updates"]}}"#,
+        )
+        .await;
+
+        send_frame(&mut ws, TRADE_UPDATE_JSON).await;
+    }
+
+    /// The full connect/auth/listen/read flow against a local mock server,
+    /// exercising the URL override (`TradingStream::connect`) offline.
+    #[tokio::test]
+    async fn connect_auth_listen_against_mock_server() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let server = tokio::spawn(serve_once(listener));
+
+        let creds = Credentials::Key {
+            key_id: "key-id".into(),
+            secret_key: "secret".into(),
+        };
+        let mut stream = TradingStream::connect(&format!("ws://{addr}/stream"), &creds)
+            .await
+            .unwrap();
+        stream.listen_trade_updates().await.unwrap();
+
+        match stream.next().await.unwrap() {
+            Some(StreamEvent::TradeUpdate(update)) => {
+                assert_eq!(update.event, TradeEvent::Fill);
+                assert_eq!(update.order.symbol, "AAPL");
+            }
+            other => panic!("expected a trade update, got: {other:?}"),
+        }
+        server.await.unwrap();
     }
 }
