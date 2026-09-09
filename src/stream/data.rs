@@ -654,28 +654,46 @@ impl MarketDataStream {
     /// auto-reconnect is enabled, a close or transport error instead triggers
     /// a reconnect (see [`MarketDataStream::set_auto_reconnect`]).
     pub async fn next(&mut self) -> Result<Option<Vec<DataMessage>>> {
-        let result = Self::read_batch(&mut self.ws).await;
+        Ok(self.next_with_raw().await?.map(|(messages, _)| messages))
+    }
+
+    /// Reads the next batch **together with the raw JSON frame it was parsed
+    /// from**.
+    ///
+    /// Same semantics as [`MarketDataStream::next`]; the extra value is the
+    /// verbatim text the server sent, before any of this crate's typing.
+    ///
+    /// This exists for recorders — see
+    /// [`TradingStream::next_with_raw`](crate::stream::trading::TradingStream::next_with_raw)
+    /// for why a captured fixture must hold the vendor's bytes rather than a
+    /// re-serialization of the parsed messages. Note a market-data frame is a
+    /// BATCH: one raw string maps to many `DataMessage`s, so a recorder should
+    /// store the frame once, not once per message.
+    pub async fn next_with_raw(&mut self) -> Result<Option<(Vec<DataMessage>, String)>> {
+        let result = Self::read_batch_with_raw(&mut self.ws).await;
         let Some(options) = self.reconnect else {
             return result;
         };
         match result {
-            Ok(Some(messages)) => Ok(Some(messages)),
+            Ok(Some(pair)) => Ok(Some(pair)),
             Ok(None) | Err(_) => {
                 self.reconnect(&options).await?;
-                Self::read_batch(&mut self.ws).await
+                Self::read_batch_with_raw(&mut self.ws).await
             }
         }
     }
 
-    /// Reads the next text frame and parses it into a batch of messages.
-    async fn read_batch(ws: &mut Ws) -> Result<Option<Vec<DataMessage>>> {
+    /// Reads the next text frame, returning the parsed batch beside the
+    /// verbatim JSON it came from.
+    async fn read_batch_with_raw(ws: &mut Ws) -> Result<Option<(Vec<DataMessage>, String)>> {
         loop {
             match ws.next().await {
                 None => return Ok(None),
                 Some(Err(e)) => return Err(Error::WebSocket(e)),
                 Some(Ok(Message::Text(text))) => {
-                    let messages: Vec<DataMessage> = serde_json::from_str(text.as_str())?;
-                    return Ok(Some(messages));
+                    let raw = text.as_str().to_string();
+                    let messages: Vec<DataMessage> = serde_json::from_str(&raw)?;
+                    return Ok(Some((messages, raw)));
                 }
                 Some(Ok(Message::Close(_))) => return Ok(None),
                 // Ping/Pong handled by tungstenite; skip binary/frame messages.
@@ -855,5 +873,35 @@ mod tests {
         assert_eq!(json["bars"], serde_json::json!(["*"]));
         assert!(json.get("quotes").is_none());
         assert!(json.get("updatedBars").is_none());
+    }
+
+    /// A market-data frame is a BATCH: one raw string, many messages. A
+    /// recorder must store the frame once and verbatim.
+    ///
+    /// This is doubly true here because the stream models carry prices as
+    /// `f64`. A consumer that needs exact decimals (anything ledger-facing)
+    /// must parse the raw text itself rather than read `StreamTrade::price`,
+    /// and can only do that if the raw text is available.
+    ///
+    /// Original note: a recorder must store the frame once and verbatim — storing a
+    /// re-serialization, or one copy per message, produces a fixture that no
+    /// longer matches what the vendor sent.
+    #[test]
+    fn the_raw_half_is_the_whole_batch_frame_verbatim() {
+        let frame = r#"[{"T":"t","S":"AAPL","i":1,"x":"V","p":191.23,"s":10,"t":"2026-07-10T17:46:34.020833716Z","c":["@"],"z":"C","unmodeled":"KEEP-ME"},{"T":"t","S":"AAPL","i":2,"x":"V","p":191.24,"s":5,"t":"2026-07-10T17:46:35.020833716Z","c":["@"],"z":"C"}]"#;
+        let messages: Vec<DataMessage> = serde_json::from_str(frame).expect("batch parses");
+        assert_eq!(messages.len(), 2, "one frame carries many messages");
+
+        // `DataMessage` is deserialize-only, so a recorder cannot even attempt
+        // to reconstruct the frame from the parsed batch — the verbatim text is
+        // the ONLY faithful record, unmodeled fields included.
+        assert!(
+            frame.contains("KEEP-ME"),
+            "the raw frame carries fields the typed batch does not model"
+        );
+        match &messages[0] {
+            DataMessage::Trade(t) => assert_eq!(t.symbol, "AAPL"),
+            other => panic!("expected a trade, got {other:?}"),
+        }
     }
 }
