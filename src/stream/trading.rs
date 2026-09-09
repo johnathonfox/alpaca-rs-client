@@ -271,30 +271,51 @@ impl TradingStream {
     /// auto-reconnect is enabled, a close or transport error instead triggers
     /// a reconnect (see [`TradingStream::set_auto_reconnect`]).
     pub async fn next(&mut self) -> Result<Option<StreamEvent>> {
-        let result = Self::read_event(&mut self.ws).await;
+        Ok(self.next_with_raw().await?.map(|(event, _)| event))
+    }
+
+    /// Reads the next stream event **together with the raw JSON frame it was
+    /// parsed from**.
+    ///
+    /// Same semantics as [`TradingStream::next`]; the extra value is the
+    /// verbatim bytes the server sent, before any of this crate's typing.
+    ///
+    /// This exists for recorders. A consumer that captures traffic to replay
+    /// later must store what the VENDOR sent, not a re-serialization of the
+    /// parsed struct: re-serializing silently drops every field this crate does
+    /// not model, so a fixture built that way can never reproduce a bug caused
+    /// by one of them — it stays green while the real frame fails. Callers
+    /// wanting only the parsed event should use [`TradingStream::next`].
+    pub async fn next_with_raw(&mut self) -> Result<Option<(StreamEvent, String)>> {
+        let result = Self::read_event_with_raw(&mut self.ws).await;
         let Some(options) = self.reconnect else {
             return result;
         };
         match result {
-            Ok(Some(event)) => Ok(Some(event)),
+            Ok(Some(pair)) => Ok(Some(pair)),
             Ok(None) | Err(_) => {
                 self.reconnect(&options).await?;
-                Self::read_event(&mut self.ws).await
+                Self::read_event_with_raw(&mut self.ws).await
             }
         }
     }
 
-    /// Reads the next text or binary frame and parses it into a stream event.
-    async fn read_event(ws: &mut Ws) -> Result<Option<StreamEvent>> {
+    /// Reads the next text or binary frame, returning the parsed event beside
+    /// the verbatim JSON it came from.
+    async fn read_event_with_raw(ws: &mut Ws) -> Result<Option<(StreamEvent, String)>> {
         loop {
             match ws.next().await {
                 None => return Ok(None),
                 Some(Err(e)) => return Err(Error::WebSocket(e)),
                 Some(Ok(Message::Text(text))) => {
-                    return Self::parse_event(serde_json::from_str(text.as_str())?);
+                    let raw = text.as_str().to_string();
+                    return Ok(Self::parse_event(serde_json::from_str(&raw)?)?.map(|e| (e, raw)));
                 }
                 Some(Ok(Message::Binary(bytes))) => {
-                    return Self::parse_event(serde_json::from_slice(&bytes)?);
+                    // Paper sends JSON as binary; keep the bytes verbatim as
+                    // text so a recorder stores exactly what arrived.
+                    let raw = String::from_utf8_lossy(&bytes).into_owned();
+                    return Ok(Self::parse_event(serde_json::from_str(&raw)?)?.map(|e| (e, raw)));
                 }
                 Some(Ok(Message::Close(_))) => return Ok(None),
                 // Ping/Pong handled by tungstenite; skip other frame types.
@@ -463,5 +484,37 @@ mod tests {
             other => panic!("expected a trade update, got: {other:?}"),
         }
         server.await.unwrap();
+    }
+
+    /// A recorder must store what the VENDOR sent. This pins that the raw half
+    /// of `next_with_raw` is the verbatim frame, INCLUDING fields this crate
+    /// does not model — re-serializing the parsed struct would drop them, and a
+    /// fixture built that way stays green while the real frame fails.
+    #[test]
+    fn the_raw_half_keeps_fields_the_typed_half_drops() {
+        let frame = r#"{"stream":"trade_updates","data":{"at":"2026-07-10T17:46:34.020833Z","event_id":"01KX6J6T54A7QRWB3X4SSG4S5C","event":"pending_new","timestamp":"2026-07-10T17:46:34.020833716Z","order":{"id":"e3f641bb-4f62-49e1-b374-3dc84444df9c","client_order_id":"cap-eq-mkt-1","created_at":"2026-07-10T17:46:34.017630156Z","updated_at":"2026-07-10T17:46:34.019069446Z","submitted_at":"2026-07-10T17:46:34.017630156Z","filled_at":null,"expired_at":null,"cancel_requested_at":null,"canceled_at":null,"failed_at":null,"replaced_at":null,"replaced_by":null,"replaces":null,"asset_id":"b0b6dd9d-8b9b-48a9-ba46-b9d54906e415","symbol":"AAPL","asset_class":"us_equity","notional":null,"qty":"1","filled_qty":"0","filled_avg_price":null,"order_class":"","order_type":"market","type":"market","side":"buy","position_intent":"buy_to_open","time_in_force":"day","limit_price":null,"stop_price":null,"status":"pending_new","extended_hours":false,"legs":null,"trail_percent":null,"trail_price":null,"hwm":null,"expires_at":"2026-07-10T20:00:00Z"},"some_future_field":"KEEP-ME"}}"#;
+        let value: serde_json::Value = serde_json::from_str(frame).unwrap();
+        let event = TradingStream::parse_event(value).unwrap().unwrap();
+
+        // The typed view models the fields it knows about...
+        match &event {
+            StreamEvent::TradeUpdate(u) => assert_eq!(u.order.symbol, "AAPL"),
+            other => panic!("expected a trade update, got {other:?}"),
+        }
+        // ...and a re-serialization of it would LOSE the unmodeled one, which
+        // is exactly why the raw frame has to be carried separately.
+        let reserialized = serde_json::to_string(&match event {
+            StreamEvent::TradeUpdate(u) => *u,
+            _ => unreachable!(),
+        })
+        .unwrap();
+        assert!(
+            !reserialized.contains("KEEP-ME"),
+            "precondition: if the typed struct kept unknown fields this test would prove nothing"
+        );
+        assert!(
+            frame.contains("KEEP-ME"),
+            "the verbatim frame is what a recorder must store"
+        );
     }
 }
