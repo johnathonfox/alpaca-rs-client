@@ -2,7 +2,7 @@
 # Published as `alpaca-rs-client` because `alpaca-rs` was already taken on
 # crates.io by an unrelated crate.
 name = "alpaca-rs-client"
-version = "0.2.2"
+version = "0.3.0"
 edition = "2024"
 description = "Async Rust client for the Alpaca trading and market data APIs (REST + WebSocket), with alpaca-py parity"
 license = "MIT OR Apache-2.0"
@@ -19,7 +19,7 @@ futures-util = "0.3.33"
 reqwest = { version = "0.13.4", default-features = false, features = ["rustls", "json", "query"] }
 rust_decimal = { version = "1.42.1", features = ["serde-str"] }
 serde = { version = "1.0.229", features = ["derive"] }
-serde_json = "1.0.151"
+serde_json = { version = "1.0.151", features = ["raw_value"] }
 thiserror = "2.0.19"
 tokio = { version = "1.53.1", features = ["macros", "rt-multi-thread", "sync", "time"] }
 tokio-tungstenite = { version = "0.30.0", features = ["rustls-tls-webpki-roots"] }
@@ -27,4 +27,5 @@ tracing = "0.1.44"
 url = "2.5.8"
 
 [dev-dependencies]
+rust_decimal_macros = "1.40"
 wiremock = "0.6.5"

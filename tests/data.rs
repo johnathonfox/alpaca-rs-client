@@ -15,6 +15,7 @@ use alpaca_rs_client::data::{
 };
 use alpaca_rs_client::rest::Credentials;
 use alpaca_rs_client::{Error, Result};
+use rust_decimal_macros::dec;
 use serde_json::json;
 use wiremock::matchers::{header, method, path, query_param, query_param_is_missing};
 use wiremock::{Mock, MockBuilder, MockServer, ResponseTemplate};
@@ -89,7 +90,7 @@ async fn stock_bars_follows_two_pages_and_merges() -> Result<()> {
 
     let bars = &resp.bars["AAPL"];
     assert_eq!(bars.len(), 3, "both pages must be merged");
-    assert_eq!(bars[2].close, 225.0);
+    assert_eq!(bars[2].close, dec!(225.0));
     assert_eq!(bars[0].trade_count, Some(42));
     assert_eq!(resp.next_page_token, None);
 
@@ -119,7 +120,7 @@ async fn stock_latest_trades_parses_per_symbol_map() -> Result<()> {
     let resp = client.latest_trades(&LatestRequest::new(["AAPL"])).await?;
 
     let trade = &resp.trades["AAPL"];
-    assert_eq!(trade.price, 224.62);
+    assert_eq!(trade.price, dec!(224.62));
     assert_eq!(trade.conditions, vec!["@"]);
 
     server.verify().await;
@@ -159,7 +160,7 @@ async fn stock_snapshots_parses_single_page() -> Result<()> {
     let snap = &resp.snapshots["AAPL"];
     assert_eq!(
         snap.latest_quote.as_ref().map(|q| q.ask_price),
-        Some(224.65)
+        Some(dec!(224.65))
     );
     assert!(snap.minute_bar.is_some());
     assert_eq!(resp.next_page_token, None);
@@ -214,8 +215,8 @@ async fn stock_auctions_follows_two_pages_and_merges() -> Result<()> {
 
     let days = &resp.auctions["AAPL"];
     assert_eq!(days.len(), 2, "both pages must be merged");
-    assert_eq!(days[1].closing[0].price, 224.62);
-    assert_eq!(days[0].opening[0].size, Some(1000.0));
+    assert_eq!(days[1].closing[0].price, dec!(224.62));
+    assert_eq!(days[0].opening[0].size, Some(dec!(1000.0)));
     assert_eq!(resp.next_page_token, None);
 
     server.verify().await;
@@ -288,7 +289,7 @@ async fn stock_single_symbol_endpoints_use_the_symbol_path() -> Result<()> {
         .await?;
     assert_eq!(bars.symbol, "AAPL");
     assert_eq!(bars.bars.len(), 1);
-    assert_eq!(bars.bars[0].close, 224.62);
+    assert_eq!(bars.bars[0].close, dec!(224.62));
 
     let auctions = client
         .auctions_for_symbol("AAPL", &AuctionsRequest::new(["AAPL"]))
@@ -298,7 +299,7 @@ async fn stock_single_symbol_endpoints_use_the_symbol_path() -> Result<()> {
     let trade = client
         .latest_trade_for_symbol("AAPL", &LatestRequest::new(["AAPL"]))
         .await?;
-    assert_eq!(trade.trade.price, 224.62);
+    assert_eq!(trade.trade.price, dec!(224.62));
 
     let mut req = LatestRequest::new(["AAPL"]);
     req.feed = Some(DataFeed::Sip);
@@ -306,7 +307,7 @@ async fn stock_single_symbol_endpoints_use_the_symbol_path() -> Result<()> {
     assert_eq!(snapshot.symbol, "AAPL");
     assert_eq!(
         snapshot.snapshot.daily_bar.as_ref().map(|b| b.close),
-        Some(224.62)
+        Some(dec!(224.62))
     );
 
     server.verify().await;
@@ -428,7 +429,7 @@ async fn screener_most_actives_and_movers() -> Result<()> {
         .movers(&MarketMoversRequest::new(MarketType::Stocks, 2))
         .await?;
     assert_eq!(movers.gainers[0].symbol, "BOIL");
-    assert_eq!(movers.losers[0].percent_change, -95.02);
+    assert_eq!(movers.losers[0].percent_change, dec!(-95.02));
 
     server.verify().await;
     Ok(())
@@ -486,9 +487,9 @@ async fn corporate_actions_parses_grouped_response() -> Result<()> {
 
     let actions = &resp.corporate_actions;
     assert_eq!(actions.cash_dividends.len(), 1);
-    assert_eq!(actions.cash_dividends[0].rate, 0.125);
+    assert_eq!(actions.cash_dividends[0].rate, dec!(0.125));
     assert_eq!(actions.forward_splits.len(), 1);
-    assert_eq!(actions.forward_splits[0].new_rate, 2.0);
+    assert_eq!(actions.forward_splits[0].new_rate, dec!(2.0));
     // Missing groups deserialize as empty lists.
     assert!(actions.reverse_splits.is_empty());
     assert_eq!(resp.next_page_token, None);
@@ -519,7 +520,7 @@ async fn crypto_latest_bars_parses_response() -> Result<()> {
     )?;
     let resp = client.latest_bars(&LatestRequest::new(["BTC/USD"])).await?;
 
-    assert_eq!(resp.bars["BTC/USD"].close, 65750.5);
+    assert_eq!(resp.bars["BTC/USD"].close, dec!(65750.5));
 
     server.verify().await;
     Ok(())
@@ -558,7 +559,10 @@ async fn option_snapshots_parses_response() -> Result<()> {
         .await?;
 
     let snap = &resp.snapshots["AAPL250117C00150000"];
-    assert_eq!(snap.latest_trade.as_ref().map(|t| t.price), Some(74.35));
+    assert_eq!(
+        snap.latest_trade.as_ref().map(|t| t.price),
+        Some(dec!(74.35))
+    );
     assert_eq!(resp.next_page_token, None);
 
     server.verify().await;
@@ -652,8 +656,8 @@ async fn forex_rates_follows_two_pages_and_merges() -> Result<()> {
 
     let usdjpy = &resp.rates["USDJPY"];
     assert_eq!(usdjpy.len(), 2);
-    assert_eq!(usdjpy[0].mid_price, 153.8);
-    assert_eq!(usdjpy[1].bid_price, 154.1);
+    assert_eq!(usdjpy[0].mid_price, dec!(153.8));
+    assert_eq!(usdjpy[1].bid_price, dec!(154.1));
     assert_eq!(resp.rates["USDMXN"].len(), 1);
     assert_eq!(resp.next_page_token, None);
 
@@ -681,7 +685,7 @@ async fn forex_latest_rates_parses_per_pair_map() -> Result<()> {
         .latest_rates(&LatestForexRatesRequest::new(["USDJPY"]))
         .await?;
 
-    assert_eq!(resp.rates["USDJPY"].ask_price, 153.9);
+    assert_eq!(resp.rates["USDJPY"].ask_price, dec!(153.9));
 
     server.verify().await;
     Ok(())
@@ -801,8 +805,8 @@ async fn fixed_income_latest_prices_parses_isin_map() -> Result<()> {
         .await?;
 
     let price = &resp.prices["US912797KJ59"];
-    assert_eq!(price.price, 99.6459);
-    assert_eq!(price.yield_to_maturity, Some(4.249));
+    assert_eq!(price.price, dec!(99.6459));
+    assert_eq!(price.yield_to_maturity, Some(dec!(4.249)));
 
     server.verify().await;
     Ok(())
@@ -829,9 +833,9 @@ async fn fixed_income_latest_quotes_parses_isin_map() -> Result<()> {
     let resp = client.latest_quotes(&req).await?;
 
     let quote = &resp.quotes["US912797SX61"];
-    assert_eq!(quote.bid_price, 99.81091667);
+    assert_eq!(quote.bid_price, dec!(99.81091667));
     assert_eq!(quote.ask_size, 1_000_000);
-    assert_eq!(quote.ask_yield_to_maturity, Some(2.226923));
+    assert_eq!(quote.ask_yield_to_maturity, Some(dec!(2.226923)));
 
     server.verify().await;
     Ok(())
@@ -877,8 +881,8 @@ async fn crypto_perp_latest_pricing_uses_global_path() -> Result<()> {
         .await?;
 
     let pricing = &resp.pricing["BTC-PERP"];
-    assert_eq!(pricing.open_interest, 90.7367);
-    assert_eq!(pricing.funding_rate, 0.000565699);
+    assert_eq!(pricing.open_interest, dec!(90.7367));
+    assert_eq!(pricing.funding_rate, dec!(0.000565699));
 
     server.verify().await;
     Ok(())
@@ -905,8 +909,8 @@ async fn crypto_perp_latest_orderbooks_uses_global_path() -> Result<()> {
 
     let book = &resp.orderbooks["BTC-PERP"];
     assert_eq!(book.bids.len(), 2);
-    assert_eq!(book.bids[0].price, 20846.0);
-    assert_eq!(book.asks[1].size, 0.0);
+    assert_eq!(book.bids[0].price, dec!(20846.0));
+    assert_eq!(book.asks[1].size, dec!(0.0));
 
     server.verify().await;
     Ok(())

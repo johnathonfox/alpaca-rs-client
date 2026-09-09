@@ -305,6 +305,21 @@ pub struct StreamError {
     pub msg: String,
 }
 
+/// # Money is `f64` here, and cannot be `Decimal`
+///
+/// Prices and sizes on the STREAM models are `f64`, unlike the REST data models
+/// and every trading model, which are `Decimal`. That is a serde limitation
+/// rather than a choice: this enum is internally tagged (`#[serde(tag = "T")]`),
+/// so serde buffers each message into a private `Content` type before matching
+/// the tag, and that buffer cannot hold a `serde_json::value::RawValue`. Exact
+/// decoding of a JSON *number* requires reading its literal text, and
+/// `RawValue` is the only way to reach it — so inside a tagged enum it is
+/// unavailable.
+///
+/// If you need exact decimals — anything ledger-facing — use
+/// [`MarketDataStream::next_with_raw`] and parse the raw frame yourself. The
+/// `f64` fields remain fine for display, charting and thresholds.
+///
 /// One message from the market data stream, tagged by the `"T"` field.
 ///
 /// Any unmodeled message types (including future additions) deserialize as

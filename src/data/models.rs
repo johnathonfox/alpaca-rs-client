@@ -4,6 +4,7 @@
 //! uses short single/double-letter keys (`"o"`, `"bp"`, ...); the Rust fields
 //! have full names with serde renames.
 
+use rust_decimal::Decimal;
 use std::collections::HashMap;
 
 use chrono::{DateTime, NaiveDate, Utc};
@@ -20,25 +21,31 @@ pub struct Bar {
     pub timestamp: DateTime<Utc>,
     /// Open price.
     #[serde(rename = "o")]
-    pub open: f64,
+    #[serde(deserialize_with = "crate::de::decimal")]
+    pub open: Decimal,
     /// High price.
     #[serde(rename = "h")]
-    pub high: f64,
+    #[serde(deserialize_with = "crate::de::decimal")]
+    pub high: Decimal,
     /// Low price.
     #[serde(rename = "l")]
-    pub low: f64,
+    #[serde(deserialize_with = "crate::de::decimal")]
+    pub low: Decimal,
     /// Close price.
     #[serde(rename = "c")]
-    pub close: f64,
+    #[serde(deserialize_with = "crate::de::decimal")]
+    pub close: Decimal,
     /// Volume.
     #[serde(rename = "v")]
-    pub volume: f64,
+    #[serde(deserialize_with = "crate::de::decimal")]
+    pub volume: Decimal,
     /// Number of trades in the bar.
     #[serde(rename = "n")]
     pub trade_count: Option<u64>,
     /// Volume-weighted average price.
     #[serde(rename = "vw")]
-    pub vwap: Option<f64>,
+    #[serde(default, deserialize_with = "crate::de::decimal_opt")]
+    pub vwap: Option<Decimal>,
 }
 
 /// A single NBBO quote.
@@ -52,19 +59,23 @@ pub struct Quote {
     pub bid_exchange: Option<String>,
     /// Bid price.
     #[serde(rename = "bp")]
-    pub bid_price: f64,
+    #[serde(deserialize_with = "crate::de::decimal")]
+    pub bid_price: Decimal,
     /// Bid size.
     #[serde(rename = "bs")]
-    pub bid_size: f64,
+    #[serde(deserialize_with = "crate::de::decimal")]
+    pub bid_size: Decimal,
     /// Ask exchange code.
     #[serde(rename = "ax")]
     pub ask_exchange: Option<String>,
     /// Ask price.
     #[serde(rename = "ap")]
-    pub ask_price: f64,
+    #[serde(deserialize_with = "crate::de::decimal")]
+    pub ask_price: Decimal,
     /// Ask size.
     #[serde(rename = "as")]
-    pub ask_size: f64,
+    #[serde(deserialize_with = "crate::de::decimal")]
+    pub ask_size: Decimal,
     /// Quote condition codes.
     #[serde(rename = "c", default, deserialize_with = "string_or_seq")]
     pub conditions: Vec<String>,
@@ -110,10 +121,12 @@ pub struct Trade {
     pub timestamp: DateTime<Utc>,
     /// Trade price.
     #[serde(rename = "p")]
-    pub price: f64,
+    #[serde(deserialize_with = "crate::de::decimal")]
+    pub price: Decimal,
     /// Trade size.
     #[serde(rename = "s")]
-    pub size: f64,
+    #[serde(deserialize_with = "crate::de::decimal")]
+    pub size: Decimal,
     /// Exchange code.
     #[serde(rename = "x")]
     pub exchange: Option<String>,
@@ -153,10 +166,12 @@ pub struct Snapshot {
 pub struct OrderbookEntry {
     /// Price.
     #[serde(rename = "p")]
-    pub price: f64,
+    #[serde(deserialize_with = "crate::de::decimal")]
+    pub price: Decimal,
     /// Size.
     #[serde(rename = "s")]
-    pub size: f64,
+    #[serde(deserialize_with = "crate::de::decimal")]
+    pub size: Decimal,
 }
 
 /// A full orderbook snapshot.
@@ -184,10 +199,12 @@ pub struct AuctionPrice {
     pub exchange: Option<String>,
     /// Auction price.
     #[serde(rename = "p")]
-    pub price: f64,
+    #[serde(deserialize_with = "crate::de::decimal")]
+    pub price: Decimal,
     /// Auction size, when reported.
     #[serde(rename = "s")]
-    pub size: Option<f64>,
+    #[serde(default, deserialize_with = "crate::de::decimal_opt")]
+    pub size: Option<Decimal>,
     /// Auction condition code.
     #[serde(rename = "c")]
     pub condition: Option<String>,
@@ -397,13 +414,38 @@ pub struct SymbolQuoteResponse {
 
 /// Snapshot response of the single-symbol endpoint: the snapshot fields sit
 /// at the top level next to the symbol.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct SymbolSnapshot {
     /// The symbol the snapshot belongs to.
     pub symbol: String,
     /// The snapshot itself.
     #[serde(flatten)]
     pub snapshot: Snapshot,
+}
+
+/// Hand-written because `#[serde(flatten)]` buffers the object into serde's
+/// private `Content` type, and that buffer cannot hold a `RawValue` — so the
+/// exact-decimal decoding used by every price field below would fail with
+/// "invalid type: newtype struct" for any snapshot reached through the flatten.
+///
+/// Re-parsing the same raw text twice costs one extra pass over a small object
+/// and keeps prices exact. `Serialize` still comes from the derive above, so
+/// the wire shape is unchanged in both directions.
+impl<'de> Deserialize<'de> for SymbolSnapshot {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        use serde::de::Error as _;
+        let raw: &serde_json::value::RawValue = Deserialize::deserialize(d)?;
+        #[derive(Deserialize)]
+        struct JustSymbol {
+            symbol: String,
+        }
+        let sym: JustSymbol = serde_json::from_str(raw.get()).map_err(D::Error::custom)?;
+        let snapshot: Snapshot = serde_json::from_str(raw.get()).map_err(D::Error::custom)?;
+        Ok(SymbolSnapshot {
+            symbol: sym.symbol,
+            snapshot,
+        })
+    }
 }
 
 /// Paginated news response.
@@ -422,9 +464,11 @@ pub struct MostActive {
     /// Symbol of the asset.
     pub symbol: String,
     /// Cumulative volume for the current trading day.
-    pub volume: f64,
+    #[serde(deserialize_with = "crate::de::decimal")]
+    pub volume: Decimal,
     /// Cumulative trade count for the current trading day.
-    pub trade_count: f64,
+    #[serde(deserialize_with = "crate::de::decimal")]
+    pub trade_count: Decimal,
 }
 
 /// Response of the most actives screener endpoint.
@@ -443,11 +487,14 @@ pub struct Mover {
     /// Symbol of the asset.
     pub symbol: String,
     /// Percentage change for the day.
-    pub percent_change: f64,
+    #[serde(deserialize_with = "crate::de::decimal")]
+    pub percent_change: Decimal,
     /// Price change for the day.
-    pub change: f64,
+    #[serde(deserialize_with = "crate::de::decimal")]
+    pub change: Decimal,
     /// Current price of the asset.
-    pub price: f64,
+    #[serde(deserialize_with = "crate::de::decimal")]
+    pub price: Decimal,
 }
 
 /// Response of the market movers screener endpoints.
@@ -475,9 +522,11 @@ pub struct ForwardSplit {
     /// CUSIP.
     pub cusip: String,
     /// New rate.
-    pub new_rate: f64,
+    #[serde(deserialize_with = "crate::de::decimal")]
+    pub new_rate: Decimal,
     /// Old rate.
-    pub old_rate: f64,
+    #[serde(deserialize_with = "crate::de::decimal")]
+    pub old_rate: Decimal,
     /// Process date.
     pub process_date: NaiveDate,
     /// Ex date.
@@ -505,9 +554,11 @@ pub struct ReverseSplit {
     /// New CUSIP.
     pub new_cusip: String,
     /// New rate.
-    pub new_rate: f64,
+    #[serde(deserialize_with = "crate::de::decimal")]
+    pub new_rate: Decimal,
     /// Old rate.
-    pub old_rate: f64,
+    #[serde(deserialize_with = "crate::de::decimal")]
+    pub old_rate: Decimal,
     /// Process date.
     pub process_date: NaiveDate,
     /// Ex date.
@@ -530,19 +581,22 @@ pub struct UnitSplit {
     /// Old CUSIP.
     pub old_cusip: String,
     /// Old rate.
-    pub old_rate: f64,
+    #[serde(deserialize_with = "crate::de::decimal")]
+    pub old_rate: Decimal,
     /// New symbol.
     pub new_symbol: String,
     /// New CUSIP.
     pub new_cusip: String,
     /// New rate.
-    pub new_rate: f64,
+    #[serde(deserialize_with = "crate::de::decimal")]
+    pub new_rate: Decimal,
     /// Alternate symbol.
     pub alternate_symbol: String,
     /// Alternate CUSIP.
     pub alternate_cusip: String,
     /// Alternate rate.
-    pub alternate_rate: f64,
+    #[serde(deserialize_with = "crate::de::decimal")]
+    pub alternate_rate: Decimal,
     /// Process date.
     pub process_date: NaiveDate,
     /// Effective date.
@@ -562,7 +616,8 @@ pub struct StockDividend {
     /// CUSIP.
     pub cusip: String,
     /// Rate.
-    pub rate: f64,
+    #[serde(deserialize_with = "crate::de::decimal")]
+    pub rate: Decimal,
     /// Process date.
     pub process_date: NaiveDate,
     /// Ex date.
@@ -585,7 +640,8 @@ pub struct CashDividend {
     /// CUSIP.
     pub cusip: String,
     /// Rate.
-    pub rate: f64,
+    #[serde(deserialize_with = "crate::de::decimal")]
+    pub rate: Decimal,
     /// Whether the dividend is special.
     pub special: bool,
     /// Whether the dividend is foreign.
@@ -618,13 +674,15 @@ pub struct SpinOff {
     /// Source CUSIP.
     pub source_cusip: String,
     /// Source rate.
-    pub source_rate: f64,
+    #[serde(deserialize_with = "crate::de::decimal")]
+    pub source_rate: Decimal,
     /// New symbol.
     pub new_symbol: String,
     /// New CUSIP.
     pub new_cusip: String,
     /// New rate.
-    pub new_rate: f64,
+    #[serde(deserialize_with = "crate::de::decimal")]
+    pub new_rate: Decimal,
     /// Process date.
     pub process_date: NaiveDate,
     /// Ex date.
@@ -656,7 +714,8 @@ pub struct CashMerger {
     /// Acquiree CUSIP.
     pub acquiree_cusip: String,
     /// Rate.
-    pub rate: f64,
+    #[serde(deserialize_with = "crate::de::decimal")]
+    pub rate: Decimal,
     /// Process date.
     pub process_date: NaiveDate,
     /// Effective date.
@@ -676,13 +735,15 @@ pub struct StockMerger {
     /// Acquirer CUSIP.
     pub acquirer_cusip: String,
     /// Acquirer rate.
-    pub acquirer_rate: f64,
+    #[serde(deserialize_with = "crate::de::decimal")]
+    pub acquirer_rate: Decimal,
     /// Acquiree symbol.
     pub acquiree_symbol: String,
     /// Acquiree CUSIP.
     pub acquiree_cusip: String,
     /// Acquiree rate.
-    pub acquiree_rate: f64,
+    #[serde(deserialize_with = "crate::de::decimal")]
+    pub acquiree_rate: Decimal,
     /// Process date.
     pub process_date: NaiveDate,
     /// Effective date.
@@ -702,15 +763,18 @@ pub struct StockAndCashMerger {
     /// Acquirer CUSIP.
     pub acquirer_cusip: String,
     /// Acquirer rate.
-    pub acquirer_rate: f64,
+    #[serde(deserialize_with = "crate::de::decimal")]
+    pub acquirer_rate: Decimal,
     /// Acquiree symbol.
     pub acquiree_symbol: String,
     /// Acquiree CUSIP.
     pub acquiree_cusip: String,
     /// Acquiree rate.
-    pub acquiree_rate: f64,
+    #[serde(deserialize_with = "crate::de::decimal")]
+    pub acquiree_rate: Decimal,
     /// Cash rate.
-    pub cash_rate: f64,
+    #[serde(deserialize_with = "crate::de::decimal")]
+    pub cash_rate: Decimal,
     /// Process date.
     pub process_date: NaiveDate,
     /// Effective date.
@@ -730,7 +794,8 @@ pub struct Redemption {
     /// CUSIP.
     pub cusip: String,
     /// Rate.
-    pub rate: f64,
+    #[serde(deserialize_with = "crate::de::decimal")]
+    pub rate: Decimal,
     /// Process date.
     pub process_date: NaiveDate,
     /// Payable date.
@@ -782,7 +847,8 @@ pub struct RightsDistribution {
     /// New CUSIP.
     pub new_cusip: String,
     /// Rate.
-    pub rate: f64,
+    #[serde(deserialize_with = "crate::de::decimal")]
+    pub rate: Decimal,
     /// Process date.
     pub process_date: NaiveDate,
     /// Ex date.
@@ -862,13 +928,16 @@ pub struct ForexRate {
     pub timestamp: DateTime<Utc>,
     /// Bid price.
     #[serde(rename = "bp")]
-    pub bid_price: f64,
+    #[serde(deserialize_with = "crate::de::decimal")]
+    pub bid_price: Decimal,
     /// Ask price.
     #[serde(rename = "ap")]
-    pub ask_price: f64,
+    #[serde(deserialize_with = "crate::de::decimal")]
+    pub ask_price: Decimal,
     /// Mid price.
     #[serde(rename = "mp")]
-    pub mid_price: f64,
+    #[serde(deserialize_with = "crate::de::decimal")]
+    pub mid_price: Decimal,
 }
 
 /// Paginated per-currency-pair historical forex rates response.
@@ -1096,13 +1165,16 @@ pub struct FixedIncomePrice {
     pub timestamp: DateTime<Utc>,
     /// Price as a percentage of par.
     #[serde(rename = "p")]
-    pub price: f64,
+    #[serde(deserialize_with = "crate::de::decimal")]
+    pub price: Decimal,
     /// Yield to maturity, when reported.
     #[serde(rename = "ytm")]
-    pub yield_to_maturity: Option<f64>,
+    #[serde(default, deserialize_with = "crate::de::decimal_opt")]
+    pub yield_to_maturity: Option<Decimal>,
     /// Yield to worst, when reported.
     #[serde(rename = "ytw")]
-    pub yield_to_worst: Option<f64>,
+    #[serde(default, deserialize_with = "crate::de::decimal_opt")]
+    pub yield_to_worst: Option<Decimal>,
 }
 
 /// Latest fixed-income prices keyed by ISIN.
@@ -1123,7 +1195,8 @@ pub struct FixedIncomeQuote {
     pub timestamp: DateTime<Utc>,
     /// Bid price as a percentage of par.
     #[serde(rename = "bp")]
-    pub bid_price: f64,
+    #[serde(deserialize_with = "crate::de::decimal")]
+    pub bid_price: Decimal,
     /// Bid size.
     #[serde(rename = "bs")]
     pub bid_size: i64,
@@ -1132,13 +1205,16 @@ pub struct FixedIncomeQuote {
     pub bid_min_size: i64,
     /// Bid yield to maturity, when reported.
     #[serde(rename = "bytm")]
-    pub bid_yield_to_maturity: Option<f64>,
+    #[serde(default, deserialize_with = "crate::de::decimal_opt")]
+    pub bid_yield_to_maturity: Option<Decimal>,
     /// Bid yield to worst, when reported.
     #[serde(rename = "bytw")]
-    pub bid_yield_to_worst: Option<f64>,
+    #[serde(default, deserialize_with = "crate::de::decimal_opt")]
+    pub bid_yield_to_worst: Option<Decimal>,
     /// Ask price as a percentage of par.
     #[serde(rename = "ap")]
-    pub ask_price: f64,
+    #[serde(deserialize_with = "crate::de::decimal")]
+    pub ask_price: Decimal,
     /// Ask size.
     #[serde(rename = "as")]
     pub ask_size: i64,
@@ -1147,10 +1223,12 @@ pub struct FixedIncomeQuote {
     pub ask_min_size: i64,
     /// Ask yield to maturity, when reported.
     #[serde(rename = "aytm")]
-    pub ask_yield_to_maturity: Option<f64>,
+    #[serde(default, deserialize_with = "crate::de::decimal_opt")]
+    pub ask_yield_to_maturity: Option<Decimal>,
     /// Ask yield to worst, when reported.
     #[serde(rename = "aytw")]
-    pub ask_yield_to_worst: Option<f64>,
+    #[serde(default, deserialize_with = "crate::de::decimal_opt")]
+    pub ask_yield_to_worst: Option<Decimal>,
 }
 
 /// Latest fixed-income quotes keyed by ISIN.
@@ -1172,16 +1250,20 @@ pub struct CryptoPerpPricing {
     pub funding_time: DateTime<Utc>,
     /// Open interest.
     #[serde(rename = "oi")]
-    pub open_interest: f64,
+    #[serde(deserialize_with = "crate::de::decimal")]
+    pub open_interest: Decimal,
     /// Index price.
     #[serde(rename = "ip")]
-    pub index_price: f64,
+    #[serde(deserialize_with = "crate::de::decimal")]
+    pub index_price: Decimal,
     /// Mark price.
     #[serde(rename = "mp")]
-    pub mark_price: f64,
+    #[serde(deserialize_with = "crate::de::decimal")]
+    pub mark_price: Decimal,
     /// Funding rate.
     #[serde(rename = "fr")]
-    pub funding_rate: f64,
+    #[serde(deserialize_with = "crate::de::decimal")]
+    pub funding_rate: Decimal,
 }
 
 /// Latest crypto-perp pricing keyed by symbol.
@@ -1194,6 +1276,7 @@ pub struct CryptoPerpLatestPricingResponse {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rust_decimal_macros::dec;
 
     #[test]
     fn deserialize_trade_with_string_conditions() {
@@ -1205,7 +1288,7 @@ mod tests {
         }"#;
         let trade: Trade = serde_json::from_str(json).unwrap();
         assert_eq!(trade.conditions, vec!["f"]);
-        assert_eq!(trade.price, 205.23);
+        assert_eq!(trade.price, dec!(205.23));
     }
 
     #[test]
@@ -1245,7 +1328,7 @@ mod tests {
         let bars = &resp.bars["AAPL"];
         assert_eq!(bars.len(), 1);
         assert_eq!(bars[0].trade_count, Some(16));
-        assert_eq!(bars[0].vwap, Some(133.7));
+        assert_eq!(bars[0].vwap, Some(dec!(133.7)));
         assert_eq!(resp.next_page_token, None);
     }
 
@@ -1262,9 +1345,9 @@ mod tests {
         let resp: ForexRatesResponse = serde_json::from_str(json).unwrap();
         let rates = &resp.rates["USDJPY"];
         assert_eq!(rates.len(), 1);
-        assert_eq!(rates[0].bid_price, 153.7);
-        assert_eq!(rates[0].ask_price, 153.9);
-        assert_eq!(rates[0].mid_price, 153.8);
+        assert_eq!(rates[0].bid_price, dec!(153.7));
+        assert_eq!(rates[0].ask_price, dec!(153.9));
+        assert_eq!(rates[0].mid_price, dec!(153.8));
         assert_eq!(resp.next_page_token.as_deref(), Some("next"));
     }
 
@@ -1276,13 +1359,16 @@ mod tests {
             }
         }"#;
         let resp: LatestForexRatesResponse = serde_json::from_str(json).unwrap();
-        assert_eq!(resp.rates["USDMXN"].mid_price, 18.2);
+        assert_eq!(resp.rates["USDMXN"].mid_price, dec!(18.2));
     }
 
     fn forex_rate(mid: f64) -> ForexRate {
-        serde_json::from_value(serde_json::json!({
-            "t": "2024-07-24T00:00:00Z", "bp": mid, "ap": mid, "mp": mid
-        }))
+        serde_json::from_str(
+            &serde_json::json!({
+                "t": "2024-07-24T00:00:00Z", "bp": mid, "ap": mid, "mp": mid
+            })
+            .to_string(),
+        )
         .unwrap()
     }
 
@@ -1300,8 +1386,8 @@ mod tests {
             next_page_token: None,
         };
         first.merge(second);
-        let mids: Vec<f64> = first.rates["USDJPY"].iter().map(|r| r.mid_price).collect();
-        assert_eq!(mids, vec![1.0, 2.0]);
+        let mids: Vec<Decimal> = first.rates["USDJPY"].iter().map(|r| r.mid_price).collect();
+        assert_eq!(mids, vec![dec!(1.0), dec!(2.0)]);
         assert_eq!(first.rates["USDMXN"].len(), 1);
         assert_eq!(first.next_page_token, None);
     }
@@ -1325,15 +1411,18 @@ mod tests {
             snap.latest_trade.unwrap().id,
             Some(TradeId::Int(52983525029461))
         );
-        assert_eq!(snap.latest_quote.unwrap().bid_price, 133.85);
+        assert_eq!(snap.latest_quote.unwrap().bid_price, dec!(133.85));
         assert!(snap.minute_bar.is_some());
     }
 
     fn bar(close: f64) -> Bar {
-        serde_json::from_value(serde_json::json!({
-            "t": "2024-07-24T07:56:00Z", "o": close, "h": close,
-            "l": close, "c": close, "v": 1
-        }))
+        serde_json::from_str(
+            &serde_json::json!({
+                "t": "2024-07-24T07:56:00Z", "o": close, "h": close,
+                "l": close, "c": close, "v": 1
+            })
+            .to_string(),
+        )
         .unwrap()
     }
 
@@ -1351,8 +1440,8 @@ mod tests {
             next_page_token: None,
         };
         first.merge(second);
-        let closes: Vec<f64> = first.bars["AAPL"].iter().map(|b| b.close).collect();
-        assert_eq!(closes, vec![1.0, 2.0, 3.0]);
+        let closes: Vec<Decimal> = first.bars["AAPL"].iter().map(|b| b.close).collect();
+        assert_eq!(closes, vec![dec!(1.0), dec!(2.0), dec!(3.0)]);
         assert_eq!(first.bars["MSFT"].len(), 1);
         assert_eq!(first.next_page_token, None);
     }
@@ -1375,10 +1464,13 @@ mod tests {
 
     #[test]
     fn news_response_merge_extends_articles() {
-        let article: NewsArticle = serde_json::from_value(serde_json::json!({
-            "id": 1, "headline": "h", "created_at": "2024-07-24T07:56:00Z",
-            "source": "test"
-        }))
+        let article: NewsArticle = serde_json::from_str(
+            &serde_json::json!({
+                "id": 1, "headline": "h", "created_at": "2024-07-24T07:56:00Z",
+                "source": "test"
+            })
+            .to_string(),
+        )
         .unwrap();
         let mut first = NewsResponse {
             news: vec![article.clone()],
@@ -1405,7 +1497,7 @@ mod tests {
         let resp: MostActives = serde_json::from_str(json).unwrap();
         assert_eq!(resp.most_actives.len(), 2);
         assert_eq!(resp.most_actives[0].symbol, "AAPL");
-        assert_eq!(resp.most_actives[0].trade_count, 486549.0);
+        assert_eq!(resp.most_actives[0].trade_count, dec!(486549.0));
         // Round-trip.
         let serialized = serde_json::to_string(&resp).unwrap();
         let again: MostActives = serde_json::from_str(&serialized).unwrap();
@@ -1427,7 +1519,7 @@ mod tests {
         let resp: Movers = serde_json::from_str(json).unwrap();
         assert_eq!(resp.market_type, MarketType::Stocks);
         assert_eq!(resp.gainers[0].symbol, "BOIL");
-        assert_eq!(resp.losers[0].percent_change, -95.02);
+        assert_eq!(resp.losers[0].percent_change, dec!(-95.02));
         // Round-trip.
         let serialized = serde_json::to_string(&resp).unwrap();
         let again: Movers = serde_json::from_str(&serialized).unwrap();
@@ -1528,7 +1620,7 @@ mod tests {
         let reverse = &actions.reverse_splits[0];
         assert_eq!(reverse.symbol, "MNTS");
         assert_eq!(reverse.new_cusip, "NEWCUSIP1");
-        assert_eq!(reverse.old_rate, 50.0);
+        assert_eq!(reverse.old_rate, dec!(50.0));
         assert!(reverse.payable_date.is_none());
 
         let forward = &actions.forward_splits[0];
@@ -1572,35 +1664,38 @@ mod tests {
     fn corporate_actions_response_merge_extends_all_groups() {
         let mut first: CorporateActionsResponse =
             serde_json::from_str(CORPORATE_ACTIONS_JSON).unwrap();
-        let second: CorporateActionsResponse = serde_json::from_value(serde_json::json!({
-            "corporate_actions": {
-                "cash_dividends": [
-                    {
-                        "cusip": "CUSIP1",
-                        "id": "a7932b15-f816-4f83-921e-998b524487c3",
-                        "ex_date": "2024-08-07",
-                        "foreign": true,
-                        "payable_date": "2024-08-26",
-                        "process_date": "2024-08-26",
-                        "rate": 0.086928,
-                        "record_date": "2024-08-07",
-                        "special": false,
-                        "symbol": "ZMTBY"
-                    }
-                ],
-                "redemptions": [
-                    {
-                        "id": "a7932b15-f816-4f83-921e-998b524487b9",
-                        "payable_date": "2023-06-13",
-                        "process_date": "2023-06-13",
-                        "cusip": "CUSIP1",
-                        "rate": 0.141134,
-                        "symbol": "ORPHY"
-                    }
-                ]
-            },
-            "next_page_token": null
-        }))
+        let second: CorporateActionsResponse = serde_json::from_str(
+            &serde_json::json!({
+                "corporate_actions": {
+                    "cash_dividends": [
+                        {
+                            "cusip": "CUSIP1",
+                            "id": "a7932b15-f816-4f83-921e-998b524487c3",
+                            "ex_date": "2024-08-07",
+                            "foreign": true,
+                            "payable_date": "2024-08-26",
+                            "process_date": "2024-08-26",
+                            "rate": 0.086928,
+                            "record_date": "2024-08-07",
+                            "special": false,
+                            "symbol": "ZMTBY"
+                        }
+                    ],
+                    "redemptions": [
+                        {
+                            "id": "a7932b15-f816-4f83-921e-998b524487b9",
+                            "payable_date": "2023-06-13",
+                            "process_date": "2023-06-13",
+                            "cusip": "CUSIP1",
+                            "rate": 0.141134,
+                            "symbol": "ORPHY"
+                        }
+                    ]
+                },
+                "next_page_token": null
+            })
+            .to_string(),
+        )
         .unwrap();
         first.merge(second);
         assert_eq!(first.corporate_actions.cash_dividends.len(), 2);
@@ -1637,8 +1732,8 @@ mod tests {
         assert_eq!(days.len(), 1);
         assert_eq!(days[0].date, NaiveDate::from_ymd_opt(2024, 7, 24).unwrap());
         assert_eq!(days[0].opening.len(), 1);
-        assert_eq!(days[0].opening[0].price, 224.0);
-        assert_eq!(days[0].opening[0].size, Some(1000.0));
+        assert_eq!(days[0].opening[0].price, dec!(224.0));
+        assert_eq!(days[0].opening[0].size, Some(dec!(1000.0)));
         assert_eq!(days[0].opening[0].condition.as_deref(), Some("Q"));
         assert_eq!(days[0].closing.len(), 2);
         // Size is optional: not every venue reports it.
@@ -1652,10 +1747,13 @@ mod tests {
     }
 
     fn auction(date: &str, close: f64) -> Auction {
-        serde_json::from_value(serde_json::json!({
-            "d": date,
-            "c": [{"t": "2024-07-24T20:00:00.106Z", "x": "P", "p": close, "c": "M"}]
-        }))
+        serde_json::from_str(
+            &serde_json::json!({
+                "d": date,
+                "c": [{"t": "2024-07-24T20:00:00.106Z", "x": "P", "p": close, "c": "M"}]
+            })
+            .to_string(),
+        )
         .unwrap()
     }
 
@@ -1693,7 +1791,7 @@ mod tests {
         let resp: SymbolBarsResponse = serde_json::from_str(json).unwrap();
         assert_eq!(resp.symbol, "AAPL");
         assert_eq!(resp.bars.len(), 1);
-        assert_eq!(resp.bars[0].close, 224.62);
+        assert_eq!(resp.bars[0].close, dec!(224.62));
 
         // Round-trip.
         let serialized = serde_json::to_string(&resp).unwrap();
@@ -1738,8 +1836,8 @@ mod tests {
             next_page_token: None,
         };
         first.merge(second);
-        let closes: Vec<f64> = first.bars.iter().map(|b| b.close).collect();
-        assert_eq!(closes, vec![1.0, 2.0, 3.0]);
+        let closes: Vec<Decimal> = first.bars.iter().map(|b| b.close).collect();
+        assert_eq!(closes, vec![dec!(1.0), dec!(2.0), dec!(3.0)]);
         assert_eq!(first.next_page_token, None);
     }
 
@@ -1752,7 +1850,7 @@ mod tests {
         )
         .unwrap();
         assert_eq!(trade.symbol, "AAPL");
-        assert_eq!(trade.trade.price, 224.62);
+        assert_eq!(trade.trade.price, dec!(224.62));
 
         let quote: SymbolQuoteResponse = serde_json::from_str(
             r#"{"symbol": "AAPL",
@@ -1760,7 +1858,7 @@ mod tests {
                           "ap": 224.65, "as": 5, "bx": "P", "ax": "Q", "z": "C"}}"#,
         )
         .unwrap();
-        assert_eq!(quote.quote.ask_price, 224.65);
+        assert_eq!(quote.quote.ask_price, dec!(224.65));
 
         let bar: SymbolBarResponse = serde_json::from_str(
             r#"{"symbol": "AAPL",
@@ -1768,7 +1866,7 @@ mod tests {
                         "l": 223.5, "c": 224.62, "v": 1000}}"#,
         )
         .unwrap();
-        assert_eq!(bar.bar.close, 224.62);
+        assert_eq!(bar.bar.close, dec!(224.62));
 
         // The snapshot fields sit next to `symbol` at the top level.
         let snapshot: SymbolSnapshot = serde_json::from_str(
@@ -1780,7 +1878,7 @@ mod tests {
         assert_eq!(snapshot.symbol, "AAPL");
         assert_eq!(
             snapshot.snapshot.daily_bar.as_ref().map(|b| b.close),
-            Some(224.62)
+            Some(dec!(224.62))
         );
         assert!(snapshot.snapshot.latest_trade.is_none());
 
@@ -1808,9 +1906,9 @@ mod tests {
         let json = r#"{"prices":{"US912797KJ59":{"p":99.6459,"t":"2025-02-14T20:58:00.648Z","ytm":4.249,"ytw":4.249}}}"#;
         let resp: FixedIncomeLatestPricesResponse = serde_json::from_str(json).unwrap();
         let price = &resp.prices["US912797KJ59"];
-        assert_eq!(price.price, 99.6459);
-        assert_eq!(price.yield_to_maturity, Some(4.249));
-        assert_eq!(price.yield_to_worst, Some(4.249));
+        assert_eq!(price.price, dec!(99.6459));
+        assert_eq!(price.yield_to_maturity, Some(dec!(4.249)));
+        assert_eq!(price.yield_to_worst, Some(dec!(4.249)));
 
         // Round-trip.
         let serialized = serde_json::to_string(&resp).unwrap();
@@ -1824,14 +1922,14 @@ mod tests {
         let json = r#"{"quotes":{"US912797SX61":{"ams":1000,"ap":99.91958333,"as":1000000,"aytm":2.226923,"aytw":2.226923,"bms":1000,"bp":99.81091667,"bs":1000000,"bytm":5.236154,"bytw":5.236154,"t":"2026-05-21T06:56:01.882466873Z"}}}"#;
         let resp: FixedIncomeLatestQuotesResponse = serde_json::from_str(json).unwrap();
         let quote = &resp.quotes["US912797SX61"];
-        assert_eq!(quote.bid_price, 99.81091667);
+        assert_eq!(quote.bid_price, dec!(99.81091667));
         assert_eq!(quote.bid_size, 1_000_000);
         assert_eq!(quote.bid_min_size, 1000);
-        assert_eq!(quote.ask_price, 99.91958333);
+        assert_eq!(quote.ask_price, dec!(99.91958333));
         assert_eq!(quote.ask_size, 1_000_000);
         assert_eq!(quote.ask_min_size, 1000);
-        assert_eq!(quote.bid_yield_to_maturity, Some(5.236154));
-        assert_eq!(quote.ask_yield_to_worst, Some(2.226923));
+        assert_eq!(quote.bid_yield_to_maturity, Some(dec!(5.236154)));
+        assert_eq!(quote.ask_yield_to_worst, Some(dec!(2.226923)));
 
         // Round-trip.
         let serialized = serde_json::to_string(&resp).unwrap();
@@ -1845,10 +1943,10 @@ mod tests {
         let json = r#"{"pricing":{"BTC-PERP":{"t":"2022-05-27T10:18:00Z","ft":"2022-05-27T10:18:00Z","oi":90.7367,"ip":50702.8,"mp":50652.3553,"fr":0.000565699}}}"#;
         let resp: CryptoPerpLatestPricingResponse = serde_json::from_str(json).unwrap();
         let pricing = &resp.pricing["BTC-PERP"];
-        assert_eq!(pricing.open_interest, 90.7367);
-        assert_eq!(pricing.index_price, 50702.8);
-        assert_eq!(pricing.mark_price, 50652.3553);
-        assert_eq!(pricing.funding_rate, 0.000565699);
+        assert_eq!(pricing.open_interest, dec!(90.7367));
+        assert_eq!(pricing.index_price, dec!(50702.8));
+        assert_eq!(pricing.mark_price, dec!(50652.3553));
+        assert_eq!(pricing.funding_rate, dec!(0.000565699));
         assert_eq!(pricing.timestamp, pricing.funding_time);
 
         // Round-trip.
@@ -1865,7 +1963,7 @@ mod tests {
             r#"{"bars":{"BTC-PERP":{"t":"2022-05-27T10:18:00Z","o":28999,"h":29003,"l":28999,"c":29003,"v":0.01,"n":4,"vw":29001}}}"#,
         )
         .unwrap();
-        assert_eq!(bars.bars["BTC-PERP"].close, 29003.0);
+        assert_eq!(bars.bars["BTC-PERP"].close, dec!(29003.0));
         assert_eq!(bars.bars["BTC-PERP"].trade_count, Some(4));
 
         let trades: LatestTradesResponse = serde_json::from_str(
@@ -1873,8 +1971,8 @@ mod tests {
         )
         .unwrap();
         let trade = &trades.trades["BTC-PERP"];
-        assert_eq!(trade.price, 29791.0);
-        assert_eq!(trade.size, 0.0016);
+        assert_eq!(trade.price, dec!(29791.0));
+        assert_eq!(trade.size, dec!(0.0016));
         assert_eq!(trade.id, Some(TradeId::Int(31455289)));
 
         let quotes: LatestQuotesResponse = serde_json::from_str(
@@ -1882,8 +1980,8 @@ mod tests {
         )
         .unwrap();
         let quote = &quotes.quotes["BTC-PERP"];
-        assert_eq!(quote.bid_price, 29058.0);
-        assert_eq!(quote.ask_size, 3.252);
+        assert_eq!(quote.bid_price, dec!(29058.0));
+        assert_eq!(quote.ask_size, dec!(3.252));
 
         let orderbooks: OrderbooksResponse = serde_json::from_str(
             r#"{"orderbooks":{"BTC-PERP":{"t":"2022-06-24T08:00:14.137774336Z","b":[{"p":20846,"s":0.1902},{"p":20350,"s":0}],"a":[{"p":20902,"s":0.0097},{"p":21444,"s":0}]}}}"#,
@@ -1891,8 +1989,8 @@ mod tests {
         .unwrap();
         let book = &orderbooks.orderbooks["BTC-PERP"];
         assert_eq!(book.bids.len(), 2);
-        assert_eq!(book.bids[0].price, 20846.0);
-        assert_eq!(book.asks[1].size, 0.0);
+        assert_eq!(book.bids[0].price, dec!(20846.0));
+        assert_eq!(book.asks[1].size, dec!(0.0));
         assert_eq!(orderbooks.next_page_token, None);
     }
 }

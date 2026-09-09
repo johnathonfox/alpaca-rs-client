@@ -22,6 +22,7 @@
 
 pub mod broker;
 pub mod data;
+pub mod de;
 pub mod error;
 pub mod rest;
 pub mod stream;
