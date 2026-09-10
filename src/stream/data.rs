@@ -200,7 +200,7 @@ pub struct StreamNews {
 }
 
 /// The action reported by a cancel error message (the `"a"` field).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum CancelErrorAction {
     /// The trade was canceled.
     #[serde(rename = "canceled")]
@@ -208,6 +208,15 @@ pub enum CancelErrorAction {
     /// The trade was marked as erroneous.
     #[serde(rename = "errored")]
     Errored,
+    /// A value the API added after this crate was released.
+    ///
+    /// Vendor vocabularies grow. Without this, one unmodeled token fails the
+    /// WHOLE response it appears in — a single new venue code would break
+    /// every position read, and the caller would see a parse error rather
+    /// than an unfamiliar value. The string is kept, not discarded, so it
+    /// round-trips and can be logged or matched on.
+    #[serde(untagged)]
+    Other(String),
 }
 
 /// A trade correction message (`T = "c"`): reports both the corrected trade

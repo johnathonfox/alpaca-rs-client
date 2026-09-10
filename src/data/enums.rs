@@ -110,21 +110,36 @@ pub enum MostActivesBy {
 }
 
 /// The market screened by the movers endpoint.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum MarketType {
     /// US stocks.
     Stocks,
     /// Crypto.
     Crypto,
+    /// A value the API added after this crate was released.
+    ///
+    /// Vendor vocabularies grow. Without this, one unmodeled token fails the
+    /// WHOLE response it appears in — a single new venue code would break
+    /// every position read, and the caller would see a parse error rather
+    /// than an unfamiliar value. The string is kept, not discarded, so it
+    /// round-trips and can be logged or matched on.
+    #[serde(untagged)]
+    Other(String),
 }
 
 impl MarketType {
     /// The market type as it appears in URL paths.
-    pub fn as_str(&self) -> &'static str {
+    ///
+    /// Borrows from `self` rather than returning `&'static str`, because an
+    /// `Other` value carries its own string. A market type the API adds later
+    /// still builds a usable path instead of panicking or being silently
+    /// mapped onto the wrong one.
+    pub fn as_str(&self) -> &str {
         match self {
             MarketType::Stocks => "stocks",
             MarketType::Crypto => "crypto",
+            MarketType::Other(s) => s.as_str(),
         }
     }
 }

@@ -35,7 +35,7 @@ const LIVE_STREAM: &str = "wss://api.alpaca.markets/stream";
 type Ws = WebSocketStream<MaybeTlsStream<TcpStream>>;
 
 /// The lifecycle event of a [`TradeUpdate`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum TradeEvent {
     /// New order.
@@ -72,6 +72,15 @@ pub enum TradeEvent {
     OrderReplaceRejected,
     /// Order cancel rejected.
     OrderCancelRejected,
+    /// A value the API added after this crate was released.
+    ///
+    /// Vendor vocabularies grow. Without this, one unmodeled token fails the
+    /// WHOLE response it appears in — a single new venue code would break
+    /// every position read, and the caller would see a parse error rather
+    /// than an unfamiliar value. The string is kept, not discarded, so it
+    /// round-trips and can be logged or matched on.
+    #[serde(untagged)]
+    Other(String),
 }
 
 /// A `trade_updates` message payload.

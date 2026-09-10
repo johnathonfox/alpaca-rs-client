@@ -21,7 +21,7 @@ pub enum OrderSide {
 }
 
 /// The type of an order.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum OrderType {
     /// Market order.
@@ -34,10 +34,19 @@ pub enum OrderType {
     StopLimit,
     /// Trailing stop order.
     TrailingStop,
+    /// A value the API added after this crate was released.
+    ///
+    /// Vendor vocabularies grow. Without this, one unmodeled token fails the
+    /// WHOLE response it appears in — a single new venue code would break
+    /// every position read, and the caller would see a parse error rather
+    /// than an unfamiliar value. The string is kept, not discarded, so it
+    /// round-trips and can be logged or matched on.
+    #[serde(untagged)]
+    Other(String),
 }
 
 /// Time in force of an order.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum TimeInForce {
     /// Day order.
@@ -52,10 +61,19 @@ pub enum TimeInForce {
     Ioc,
     /// Fill or kill.
     Fok,
+    /// A value the API added after this crate was released.
+    ///
+    /// Vendor vocabularies grow. Without this, one unmodeled token fails the
+    /// WHOLE response it appears in — a single new venue code would break
+    /// every position read, and the caller would see a parse error rather
+    /// than an unfamiliar value. The string is kept, not discarded, so it
+    /// round-trips and can be logged or matched on.
+    #[serde(untagged)]
+    Other(String),
 }
 
 /// The lifecycle status of an order.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum OrderStatus {
     /// The order has been received by Alpaca, but hasn't been routed yet.
@@ -94,10 +112,19 @@ pub enum OrderStatus {
     Calculated,
     /// The order is held.
     Held,
+    /// A value the API added after this crate was released.
+    ///
+    /// Vendor vocabularies grow. Without this, one unmodeled token fails the
+    /// WHOLE response it appears in — a single new venue code would break
+    /// every position read, and the caller would see a parse error rather
+    /// than an unfamiliar value. The string is kept, not discarded, so it
+    /// round-trips and can be logged or matched on.
+    #[serde(untagged)]
+    Other(String),
 }
 
 /// The class of an order (single leg or multi-leg strategies).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum OrderClass {
     /// A simple, single-leg order.
@@ -110,16 +137,34 @@ pub enum OrderClass {
     Oto,
     /// Multi-leg (options).
     Mleg,
+    /// A value the API added after this crate was released.
+    ///
+    /// Vendor vocabularies grow. Without this, one unmodeled token fails the
+    /// WHOLE response it appears in — a single new venue code would break
+    /// every position read, and the caller would see a parse error rather
+    /// than an unfamiliar value. The string is kept, not discarded, so it
+    /// round-trips and can be logged or matched on.
+    #[serde(untagged)]
+    Other(String),
 }
 
 /// The side of a position.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PositionSide {
     /// Short position.
     Short,
     /// Long position.
     Long,
+    /// A value the API added after this crate was released.
+    ///
+    /// Vendor vocabularies grow. Without this, one unmodeled token fails the
+    /// WHOLE response it appears in — a single new venue code would break
+    /// every position read, and the caller would see a parse error rather
+    /// than an unfamiliar value. The string is kept, not discarded, so it
+    /// round-trips and can be logged or matched on.
+    #[serde(untagged)]
+    Other(String),
 }
 
 /// The intent of an option position order.
@@ -137,7 +182,7 @@ pub enum PositionIntent {
 }
 
 /// The class of an asset.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum AssetClass {
     /// US equity.
@@ -150,21 +195,39 @@ pub enum AssetClass {
     /// `POST /v2/orders`, and perp assets are listed via
     /// `GET /v2/assets?asset_class=crypto_perp`.
     CryptoPerp,
+    /// A value the API added after this crate was released.
+    ///
+    /// Vendor vocabularies grow. Without this, one unmodeled token fails the
+    /// WHOLE response it appears in — a single new venue code would break
+    /// every position read, and the caller would see a parse error rather
+    /// than an unfamiliar value. The string is kept, not discarded, so it
+    /// round-trips and can be logged or matched on.
+    #[serde(untagged)]
+    Other(String),
 }
 
 /// The status of an asset.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum AssetStatus {
     /// Active.
     Active,
     /// Inactive.
     Inactive,
+    /// A value the API added after this crate was released.
+    ///
+    /// Vendor vocabularies grow. Without this, one unmodeled token fails the
+    /// WHOLE response it appears in — a single new venue code would break
+    /// every position read, and the caller would see a parse error rather
+    /// than an unfamiliar value. The string is kept, not discarded, so it
+    /// round-trips and can be logged or matched on.
+    #[serde(untagged)]
+    Other(String),
 }
 
 /// An exchange an asset trades on. Names are serialized as-is
 /// (e.g. `"NASDAQ"`).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum AssetExchange {
     /// NYSE American (AMEX).
     AMEX,
@@ -184,6 +247,15 @@ pub enum AssetExchange {
     OTC,
     /// Crypto exchange placeholder used by Alpaca.
     CRYPTO,
+    /// A value the API added after this crate was released.
+    ///
+    /// Vendor vocabularies grow. Without this, one unmodeled token fails the
+    /// WHOLE response it appears in — a single new venue code would break
+    /// every position read, and the caller would see a parse error rather
+    /// than an unfamiliar value. The string is kept, not discarded, so it
+    /// round-trips and can be logged or matched on.
+    #[serde(untagged)]
+    Other(String),
 }
 
 /// How hard an asset is to borrow for short selling. Supersedes the
@@ -257,27 +329,45 @@ pub enum QueryOrderStatus {
 }
 
 /// The type of an option contract.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ContractType {
     /// Call option.
     Call,
     /// Put option.
     Put,
+    /// A value the API added after this crate was released.
+    ///
+    /// Vendor vocabularies grow. Without this, one unmodeled token fails the
+    /// WHOLE response it appears in — a single new venue code would break
+    /// every position read, and the caller would see a parse error rather
+    /// than an unfamiliar value. The string is kept, not discarded, so it
+    /// round-trips and can be logged or matched on.
+    #[serde(untagged)]
+    Other(String),
 }
 
 /// The exercise style of an option contract.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ExerciseStyle {
     /// American style.
     American,
     /// European style.
     European,
+    /// A value the API added after this crate was released.
+    ///
+    /// Vendor vocabularies grow. Without this, one unmodeled token fails the
+    /// WHOLE response it appears in — a single new venue code would break
+    /// every position read, and the caller would see a parse error rather
+    /// than an unfamiliar value. The string is kept, not discarded, so it
+    /// round-trips and can be logged or matched on.
+    #[serde(untagged)]
+    Other(String),
 }
 
 /// Day trade buying power check configuration.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum DTBPCheck {
     /// Check on both entry and exit.
@@ -286,10 +376,19 @@ pub enum DTBPCheck {
     Entry,
     /// Check on exit only.
     Exit,
+    /// A value the API added after this crate was released.
+    ///
+    /// Vendor vocabularies grow. Without this, one unmodeled token fails the
+    /// WHOLE response it appears in — a single new venue code would break
+    /// every position read, and the caller would see a parse error rather
+    /// than an unfamiliar value. The string is kept, not discarded, so it
+    /// round-trips and can be logged or matched on.
+    #[serde(untagged)]
+    Other(String),
 }
 
 /// Pattern day trader check configuration.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PDTCheck {
     /// Check on both entry and exit.
@@ -298,16 +397,34 @@ pub enum PDTCheck {
     Entry,
     /// Check on exit only.
     Exit,
+    /// A value the API added after this crate was released.
+    ///
+    /// Vendor vocabularies grow. Without this, one unmodeled token fails the
+    /// WHOLE response it appears in — a single new venue code would break
+    /// every position read, and the caller would see a parse error rather
+    /// than an unfamiliar value. The string is kept, not discarded, so it
+    /// round-trips and can be logged or matched on.
+    #[serde(untagged)]
+    Other(String),
 }
 
 /// Trade confirmation email configuration.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum TradeConfirmationEmail {
     /// Send emails for all trades.
     All,
     /// Send no emails.
     None,
+    /// A value the API added after this crate was released.
+    ///
+    /// Vendor vocabularies grow. Without this, one unmodeled token fails the
+    /// WHOLE response it appears in — a single new venue code would break
+    /// every position read, and the caller would see a parse error rather
+    /// than an unfamiliar value. The string is kept, not discarded, so it
+    /// round-trips and can be logged or matched on.
+    #[serde(untagged)]
+    Other(String),
 }
 
 /// The kind of an account activity (serialized screaming-case, e.g. `"FILL"`).
@@ -450,13 +567,22 @@ impl ActivityType {
 }
 
 /// The type of a trade activity.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum TradeActivityType {
     /// A partial fill.
     PartialFill,
     /// A full fill.
     Fill,
+    /// A value the API added after this crate was released.
+    ///
+    /// Vendor vocabularies grow. Without this, one unmodeled token fails the
+    /// WHOLE response it appears in — a single new venue code would break
+    /// every position read, and the caller would see a parse error rather
+    /// than an unfamiliar value. The string is kept, not discarded, so it
+    /// round-trips and can be logged or matched on.
+    #[serde(untagged)]
+    Other(String),
 }
 
 /// A market addressed by the v3 clock and calendar endpoints, identified by
@@ -674,7 +800,7 @@ pub enum LocateQuoteErrorCode {
 }
 
 /// The status of a non-trade activity (not present for all activity types).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum NonTradeActivityStatus {
     /// The activity has been executed.
@@ -683,6 +809,15 @@ pub enum NonTradeActivityStatus {
     Correct,
     /// The activity has been canceled.
     Canceled,
+    /// A value the API added after this crate was released.
+    ///
+    /// Vendor vocabularies grow. Without this, one unmodeled token fails the
+    /// WHOLE response it appears in — a single new venue code would break
+    /// every position read, and the caller would see a parse error rather
+    /// than an unfamiliar value. The string is kept, not discarded, so it
+    /// round-trips and can be logged or matched on.
+    #[serde(untagged)]
+    Other(String),
 }
 
 /// A blockchain network used by the crypto wallets/funding and perpetuals
@@ -1147,5 +1282,70 @@ mod tests {
             status,
             TokenizationRequestStatus::Other("processing".into())
         );
+    }
+}
+
+#[cfg(test)]
+mod forward_compat {
+    use super::*;
+
+    /// The failure this exists to prevent, using the value that actually caused
+    /// it: `FTXU` is Alpaca's historical crypto venue code and was not a
+    /// variant, so a position carrying it failed to deserialize — and because
+    /// `Position` is read as a whole list, ONE unknown code emptied the entire
+    /// read. Downstream, the divergence check then reported an error and
+    /// compared nothing, which is quiet rather than loud.
+    #[test]
+    fn an_unmodeled_exchange_code_parses_instead_of_failing() {
+        let e: AssetExchange = serde_json::from_str(r#""FTXU""#).expect("must not fail");
+        assert_eq!(e, AssetExchange::Other("FTXU".to_string()));
+    }
+
+    /// The unknown value is KEPT, not collapsed to a nameless variant, so it
+    /// round-trips and can be logged or matched on. A caller that stores and
+    /// re-sends an order must not silently rewrite the vendor's own token.
+    #[test]
+    fn an_unknown_value_round_trips_unchanged() {
+        for json in [r#""SOME_NEW_VENUE""#, r#""ARCA""#] {
+            let e: AssetExchange = serde_json::from_str(json).unwrap();
+            assert_eq!(serde_json::to_string(&e).unwrap(), json);
+        }
+    }
+
+    /// Known variants must still win. A catch-all that swallowed everything
+    /// would parse fine and quietly lose all typing.
+    #[test]
+    fn known_values_still_match_their_variants() {
+        let known: AssetExchange = serde_json::from_str(r#""NASDAQ""#).unwrap();
+        assert_eq!(known, AssetExchange::NASDAQ);
+
+        let side: PositionSide = serde_json::from_str(r#""long""#).unwrap();
+        assert_eq!(side, PositionSide::Long);
+
+        let status: OrderStatus = serde_json::from_str(r#""filled""#).unwrap();
+        assert_eq!(status, OrderStatus::Filled);
+    }
+
+    /// Every enum the vendor fills in must tolerate a new value. Spot-checked
+    /// across the order, position, asset and activity vocabularies rather than
+    /// trusting that the change was applied uniformly.
+    #[test]
+    fn every_response_enum_tolerates_a_new_value() {
+        let novel = r#""SOMETHING_NEW""#;
+        assert!(serde_json::from_str::<AssetClass>(novel).is_ok());
+        assert!(serde_json::from_str::<AssetExchange>(novel).is_ok());
+        assert!(serde_json::from_str::<AssetStatus>(novel).is_ok());
+        assert!(serde_json::from_str::<PositionSide>(novel).is_ok());
+        assert!(serde_json::from_str::<OrderStatus>(novel).is_ok());
+        assert!(serde_json::from_str::<OrderType>(novel).is_ok());
+        assert!(serde_json::from_str::<OrderClass>(novel).is_ok());
+        assert!(serde_json::from_str::<TimeInForce>(novel).is_ok());
+        assert!(serde_json::from_str::<TradeActivityType>(novel).is_ok());
+        assert!(serde_json::from_str::<NonTradeActivityStatus>(novel).is_ok());
+        assert!(serde_json::from_str::<ContractType>(novel).is_ok());
+        assert!(serde_json::from_str::<ExerciseStyle>(novel).is_ok());
+        assert!(serde_json::from_str::<DTBPCheck>(novel).is_ok());
+        assert!(serde_json::from_str::<PDTCheck>(novel).is_ok());
+        assert!(serde_json::from_str::<TradeConfirmationEmail>(novel).is_ok());
     }
 }
