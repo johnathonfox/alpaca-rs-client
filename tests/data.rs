@@ -945,3 +945,41 @@ async fn fixed_income_forbidden_maps_to_error_api() -> Result<()> {
     server.verify().await;
     Ok(())
 }
+
+/// A paced caller must be able to fetch ONE page and decide for itself whether
+/// to ask for the next. `trades_for_symbol` follows every page internally,
+/// which leaves no seam for a rate limiter, a page cap, or streaming each page
+/// onward — so the single-page variant exists, and this pins that it really
+/// does stop after one request even when the server offers a next token.
+#[tokio::test]
+async fn trades_for_symbol_page_fetches_exactly_one_page() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/v2/stocks/AAPL/trades"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "symbol": "AAPL",
+            "trades": [{"t":"2024-07-24T07:56:00Z","x":"V","p":224.62,"s":10,"c":["@"],"i":1,"z":"C"}],
+            "next_page_token": "MORE"
+        })))
+        .expect(1) // exactly one request: no auto-following
+        .mount(&server)
+        .await;
+
+    let client =
+        StockHistoricalDataClient::with_base_url(test_credentials(), &server.uri()).unwrap();
+    let page = client
+        .trades_for_symbol_page(
+            "AAPL",
+            &alpaca_rs_client::data::requests::TradesRequest::new(["AAPL"]),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(page.trades.len(), 1);
+    assert_eq!(page.trades[0].price, dec!(224.62));
+    assert_eq!(
+        page.next_page_token.as_deref(),
+        Some("MORE"),
+        "the token is handed back so the caller can pace the next request"
+    );
+}

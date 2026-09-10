@@ -178,6 +178,34 @@ impl StockHistoricalDataClient {
     /// The `symbols` field of `req` is ignored.
     ///
     /// Follows `next_page_token` and returns all pages merged.
+    /// `GET /v2/stocks/{symbol}/trades` — **one page only**.
+    ///
+    /// [`trades_for_symbol`](Self::trades_for_symbol) follows `next_page_token`
+    /// internally until the server stops returning one, which is the right
+    /// default for a caller that just wants the data. It is the wrong shape for
+    /// a caller that must:
+    ///
+    /// - **pace** each request (Alpaca's paper tier is ~200 req/min, and a
+    ///   client-side limiter cannot get between auto-followed pages),
+    /// - **cap** the number of pages, so a mis-specified window cannot pull
+    ///   unbounded data, or
+    /// - **stream** each page onward instead of buffering the whole result.
+    ///
+    /// This returns a single page and leaves `next_page_token` to the caller,
+    /// who passes it back via [`TradesRequest::page_token`].
+    pub async fn trades_for_symbol_page(
+        &self,
+        symbol: &str,
+        req: &TradesRequest,
+    ) -> Result<SymbolTradesResponse> {
+        self.rest
+            .get(
+                &format!("/v2/stocks/{}/trades", encode_segment(symbol)),
+                &without_symbols(req)?,
+            )
+            .await
+    }
+
     pub async fn trades_for_symbol(
         &self,
         symbol: &str,
