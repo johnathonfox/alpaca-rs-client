@@ -21,6 +21,8 @@ pub struct CryptoPerpDataClient {
     rest: RestClient,
 }
 
+crate::rest::impl_http_options!(CryptoPerpDataClient);
+
 impl CryptoPerpDataClient {
     /// Creates a new crypto-perp data client.
     pub fn new(creds: Credentials) -> Result<Self> {

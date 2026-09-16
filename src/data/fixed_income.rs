@@ -16,6 +16,8 @@ pub struct FixedIncomeDataClient {
     rest: RestClient,
 }
 
+crate::rest::impl_http_options!(FixedIncomeDataClient);
+
 impl FixedIncomeDataClient {
     /// Creates a new fixed income data client.
     pub fn new(creds: Credentials) -> Result<Self> {

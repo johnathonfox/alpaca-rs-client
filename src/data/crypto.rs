@@ -18,6 +18,8 @@ pub struct CryptoHistoricalDataClient {
     feed: CryptoFeed,
 }
 
+crate::rest::impl_http_options!(CryptoHistoricalDataClient);
+
 impl CryptoHistoricalDataClient {
     /// Creates a new crypto data client for the given feed.
     pub fn new(creds: Credentials, feed: CryptoFeed) -> Result<Self> {

@@ -12,6 +12,8 @@ pub struct NewsClient {
     rest: RestClient,
 }
 
+crate::rest::impl_http_options!(NewsClient);
+
 impl NewsClient {
     /// Creates a new news client.
     pub fn new(creds: Credentials) -> Result<Self> {

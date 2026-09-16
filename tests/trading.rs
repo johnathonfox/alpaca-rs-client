@@ -1377,3 +1377,54 @@ async fn get_tokenization_request_by_client_request_id_uses_colon_path() -> Resu
     server.verify().await;
     Ok(())
 }
+
+/// A server that accepts the request and never answers in time must not hang
+/// the caller. `reqwest::Client::new()` has no timeout at all, so before
+/// `HttpOptions` a half-open connection hung every REST call forever --
+/// including `submit_order`, where a caller cannot tell "slow" from "lost".
+#[tokio::test]
+async fn a_slow_server_times_out_at_the_configured_http_timeout() -> Result<()> {
+    use alpaca_rs_client::rest::HttpOptions;
+    use std::time::{Duration, Instant};
+
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/v2/clock"))
+        .respond_with(ResponseTemplate::new(200).set_delay(Duration::from_secs(30)))
+        .mount(&server)
+        .await;
+
+    let client = TradingClient::with_base_url(test_credentials(), &server.uri())?
+        .with_http_options(HttpOptions::default().timeout(Some(Duration::from_millis(200))))?;
+
+    let started = Instant::now();
+    let err = client
+        .get_clock()
+        .await
+        .expect_err("a 30s response must not beat a 200ms timeout");
+    // Timeouts are retried (3 attempts, 1s + 2s backoff), so the bound is the
+    // whole retry budget -- seconds, never the server's 30s.
+    assert!(
+        started.elapsed() < Duration::from_secs(10),
+        "took {:?}",
+        started.elapsed()
+    );
+    assert!(
+        matches!(&err, Error::Http(e) if e.is_timeout()),
+        "expected a timeout, got {err:?}"
+    );
+    Ok(())
+}
+
+/// Every REST client gets a bounded transport by default: a caller who never
+/// heard of `HttpOptions` must not inherit an unbounded hang.
+#[test]
+fn default_http_options_are_bounded() {
+    use alpaca_rs_client::rest::HttpOptions;
+    let o = HttpOptions::default();
+    assert!(o.timeout.is_some(), "default request timeout must be set");
+    assert!(
+        o.connect_timeout.is_some(),
+        "default connect timeout must be set"
+    );
+}

@@ -47,6 +47,8 @@ pub struct OptionHistoricalDataClient {
     rest: RestClient,
 }
 
+crate::rest::impl_http_options!(OptionHistoricalDataClient);
+
 impl OptionHistoricalDataClient {
     /// Creates a new option data client.
     pub fn new(creds: Credentials) -> Result<Self> {
