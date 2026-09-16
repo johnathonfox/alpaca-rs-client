@@ -155,6 +155,97 @@ where
     Ok(merged)
 }
 
+/// Default overall timeout for one REST request attempt. Generous, because a
+/// large historical-data page on a slow link is legitimate; finite, because an
+/// unbounded request turns a half-open connection into a caller that hangs
+/// forever.
+pub const DEFAULT_TIMEOUT: Duration = Duration::from_secs(60);
+
+/// Default TCP/TLS connect timeout. Much shorter than [`DEFAULT_TIMEOUT`]: a
+/// stuck handshake should fail fast rather than eat the request budget.
+pub const DEFAULT_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// HTTP transport settings for a REST client. Apply with any client's
+/// `with_http_options`.
+///
+/// Both timeouts apply per attempt; transient failures (including timeouts)
+/// are retried as described on the client, so the worst case for one call is
+/// roughly three timeouts plus the retry backoff.
+///
+/// ```
+/// use alpaca_rs_client::rest::{Credentials, HttpOptions};
+/// use alpaca_rs_client::trading::TradingClient;
+/// use std::time::Duration;
+///
+/// # fn main() -> alpaca_rs_client::Result<()> {
+/// let creds = Credentials::Key { key_id: "k".into(), secret_key: "s".into() };
+/// let client = TradingClient::new(creds, true)?
+///     .with_http_options(HttpOptions::default().timeout(Some(Duration::from_secs(15))))?;
+/// # let _ = client;
+/// # Ok(())
+/// # }
+/// ```
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct HttpOptions {
+    /// Overall timeout for one request attempt, or `None` for no limit.
+    pub timeout: Option<Duration>,
+    /// Connect timeout, or `None` for no limit.
+    pub connect_timeout: Option<Duration>,
+}
+
+impl Default for HttpOptions {
+    fn default() -> Self {
+        Self {
+            timeout: Some(DEFAULT_TIMEOUT),
+            connect_timeout: Some(DEFAULT_CONNECT_TIMEOUT),
+        }
+    }
+}
+
+impl HttpOptions {
+    /// Set the overall per-attempt request timeout (`None` disables it).
+    pub fn timeout(mut self, timeout: Option<Duration>) -> Self {
+        self.timeout = timeout;
+        self
+    }
+
+    /// Set the connect timeout (`None` disables it).
+    pub fn connect_timeout(mut self, connect_timeout: Option<Duration>) -> Self {
+        self.connect_timeout = connect_timeout;
+        self
+    }
+
+    fn build(&self) -> Result<reqwest::Client> {
+        let mut builder = reqwest::Client::builder();
+        if let Some(t) = self.timeout {
+            builder = builder.timeout(t);
+        }
+        if let Some(t) = self.connect_timeout {
+            builder = builder.connect_timeout(t);
+        }
+        Ok(builder.build()?)
+    }
+}
+
+/// Adds `with_http_options` to a client type that holds a `rest: RestClient`.
+macro_rules! impl_http_options {
+    ($client:ty) => {
+        impl $client {
+            /// Replace this client's HTTP transport settings (timeouts). See
+            /// [`crate::rest::HttpOptions`]; clients start with its defaults.
+            pub fn with_http_options(
+                mut self,
+                options: crate::rest::HttpOptions,
+            ) -> crate::Result<Self> {
+                self.rest.set_http_options(&options)?;
+                Ok(self)
+            }
+        }
+    };
+}
+pub(crate) use impl_http_options;
+
 /// Low-level shared REST client. Handles authentication headers, URL joining
 /// and error mapping; the individual API clients build on top of it.
 ///
@@ -202,10 +293,16 @@ fn retry_delay(attempt: u32) -> Option<Duration> {
 impl RestClient {
     pub(crate) fn new(base: &str, creds: Credentials) -> Result<Self> {
         Ok(Self {
-            http: reqwest::Client::new(),
+            http: HttpOptions::default().build()?,
             base: Url::parse(base)?,
             creds,
         })
+    }
+
+    /// Rebuild the transport with `options`.
+    pub(crate) fn set_http_options(&mut self, options: &HttpOptions) -> Result<()> {
+        self.http = options.build()?;
+        Ok(())
     }
 
     fn url(&self, path: &str) -> Result<Url> {

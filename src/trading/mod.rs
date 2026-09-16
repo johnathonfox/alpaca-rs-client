@@ -31,6 +31,8 @@ pub struct TradingClient {
     pub(crate) rest: RestClient,
 }
 
+crate::rest::impl_http_options!(TradingClient);
+
 impl TradingClient {
     /// Creates a new trading client. `paper: true` targets the paper trading
     /// environment.

@@ -12,6 +12,8 @@ pub struct ScreenerClient {
     rest: RestClient,
 }
 
+crate::rest::impl_http_options!(ScreenerClient);
+
 impl ScreenerClient {
     /// Creates a new screener client.
     pub fn new(creds: Credentials) -> Result<Self> {

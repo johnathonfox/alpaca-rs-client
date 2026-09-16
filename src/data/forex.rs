@@ -12,6 +12,8 @@ pub struct ForexClient {
     rest: RestClient,
 }
 
+crate::rest::impl_http_options!(ForexClient);
+
 impl ForexClient {
     /// Creates a new forex client.
     pub fn new(creds: Credentials) -> Result<Self> {

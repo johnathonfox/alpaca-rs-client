@@ -38,6 +38,8 @@ pub struct FixedIncomeAssetsClient {
     rest: RestClient,
 }
 
+crate::rest::impl_http_options!(FixedIncomeAssetsClient);
+
 impl FixedIncomeAssetsClient {
     /// Creates a new broker fixed-income client. `sandbox: true` targets the
     /// broker sandbox environment.

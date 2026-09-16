@@ -58,6 +58,9 @@ name is `alpaca_rs_client`).
   and resume from the last event id on auto-reconnect.
 - **Resilience** — automatic retry with backoff on HTTP 429 / transient 5xx;
   every client accepts a `base_url` override for testing or proxies.
+- **Bounded requests** — every REST client has a request timeout (60s) and
+  connect timeout (10s) by default; tune per client with
+  `with_http_options(HttpOptions::default().timeout(...))`
 - No panics in library code: everything returns `alpaca_rs_client::Result<T>`.
   Trading numbers are `rust_decimal::Decimal` (the API string-encodes them);
   market-data numbers are `f64`.

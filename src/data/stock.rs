@@ -38,6 +38,8 @@ pub struct StockHistoricalDataClient {
     rest: RestClient,
 }
 
+crate::rest::impl_http_options!(StockHistoricalDataClient);
+
 impl StockHistoricalDataClient {
     /// Creates a new stock data client.
     pub fn new(creds: Credentials) -> Result<Self> {

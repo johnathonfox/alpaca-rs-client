@@ -23,6 +23,8 @@ pub struct LogoClient {
     rest: RestClient,
 }
 
+crate::rest::impl_http_options!(LogoClient);
+
 impl LogoClient {
     /// Creates a new logo client.
     pub fn new(creds: Credentials) -> Result<Self> {

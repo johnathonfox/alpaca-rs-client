@@ -12,6 +12,8 @@ pub struct CorporateActionsClient {
     rest: RestClient,
 }
 
+crate::rest::impl_http_options!(CorporateActionsClient);
+
 impl CorporateActionsClient {
     /// Creates a new corporate actions client.
     pub fn new(creds: Credentials) -> Result<Self> {
