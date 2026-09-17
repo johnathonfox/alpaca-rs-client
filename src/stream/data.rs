@@ -202,11 +202,11 @@ pub struct StreamNews {
 /// The action reported by a cancel error message (the `"a"` field).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum CancelErrorAction {
-    /// The trade was canceled.
-    #[serde(rename = "canceled")]
+    /// The trade was canceled. Alpaca's docs send `"C"`.
+    #[serde(rename = "canceled", alias = "C")]
     Canceled,
-    /// The trade was marked as erroneous.
-    #[serde(rename = "errored")]
+    /// The trade was marked as erroneous. Alpaca's docs send `"E"`.
+    #[serde(rename = "errored", alias = "E")]
     Errored,
     /// A value the API added after this crate was released.
     ///
@@ -221,28 +221,38 @@ pub enum CancelErrorAction {
 
 /// A trade correction message (`T = "c"`): reports both the corrected trade
 /// and the original values it replaces.
+///
+/// Alpaca documents the corrected trade's fields as `ci` / `cp` / `cs` / `cc`
+/// (docs.alpaca.markets/docs/real-time-stock-pricing-data, "Trade corrections"),
+/// and alpacahq/alpaca-trade-api-go decodes exactly those keys. This model used
+/// to read them as `i` / `p` / `s` / `c`, so a correction in the documented
+/// shape failed with ``missing field `p` `` — and because a market-data frame
+/// is parsed as ONE batch, that error discarded every other message in the
+/// frame and ended [`MarketDataStream::next`] with an error. The documented
+/// keys are primary; the old keys stay as aliases so a frame in either shape
+/// parses.
 #[derive(Debug, Clone, Deserialize)]
 pub struct StreamCorrection {
     /// Symbol.
     #[serde(rename = "S")]
     pub symbol: String,
     /// Trade id of the corrected trade.
-    #[serde(rename = "i")]
+    #[serde(rename = "ci", alias = "i")]
     pub id: Option<TradeId>,
     /// Exchange code.
     #[serde(rename = "x")]
     pub exchange: Option<String>,
     /// Corrected trade price.
-    #[serde(rename = "p")]
+    #[serde(rename = "cp", alias = "p")]
     pub price: f64,
     /// Corrected trade size.
-    #[serde(rename = "s")]
+    #[serde(rename = "cs", alias = "s")]
     pub size: f64,
-    /// Correction timestamp.
+    /// Timestamp of the (original) trade being corrected.
     #[serde(rename = "t")]
     pub timestamp: DateTime<Utc>,
     /// Corrected trade condition codes.
-    #[serde(rename = "c", default)]
+    #[serde(rename = "cc", alias = "c", default)]
     pub conditions: Vec<String>,
     /// Tape.
     #[serde(rename = "z")]
@@ -788,6 +798,58 @@ mod tests {
             }
             other => panic!("expected correction, got {other:?}"),
         }
+    }
+
+    /// The documented shape, verbatim from the example on Alpaca's "Real-time
+    /// Stock Data" page (docs.alpaca.markets/docs/real-time-stock-pricing-data,
+    /// fetched 2026-09-16), batched with a trade the way the stream frames
+    /// messages. Doc-derived, not a captured frame. Before this fix the whole
+    /// batch failed with ``missing field `p` ``, losing the trade too.
+    #[test]
+    fn parse_correction_in_the_documented_shape_without_losing_its_batch() {
+        let json = r#"[{"T":"t","S":"EEM","i":1,"x":"M","p":39.15,"s":100,"t":"2023-04-06T14:25:06.542305024Z","z":"B"},{"T":"c","S":"EEM","x":"M","oi":52983525033527,"op":39.1582,"os":440000,"oc":[" ","7"],"ci":52983525034326,"cp":39.1809,"cs":440000,"cc":[" ","7"],"z":"B","t":"2023-04-06T14:25:06.542305024Z"}]"#;
+        let messages: Vec<DataMessage> = serde_json::from_str(json).unwrap();
+        assert_eq!(messages.len(), 2);
+        assert!(matches!(messages[0], DataMessage::Trade(_)));
+        match &messages[1] {
+            DataMessage::Correction(c) => {
+                assert_eq!(c.symbol, "EEM");
+                assert_eq!(c.exchange.as_deref(), Some("M"));
+                assert_eq!(c.id, Some(TradeId::Int(52983525034326)));
+                assert!((c.price - 39.1809).abs() < 1e-9);
+                assert_eq!(c.size, 440000.0);
+                assert_eq!(c.conditions, vec![" ", "7"]);
+                assert_eq!(c.original_id, Some(TradeId::Int(52983525033527)));
+                assert_eq!(c.original_price, Some(39.1582));
+                assert_eq!(c.original_size, Some(440000.0));
+                assert_eq!(c.original_conditions, vec![" ", "7"]);
+                assert_eq!(c.tape.as_deref(), Some("B"));
+                assert!(c.original_timestamp.is_none());
+            }
+            other => panic!("expected correction, got {other:?}"),
+        }
+    }
+
+    /// The documented cancel example: `"a":"C"`, which used to parse only as
+    /// the forward-compat `Other("C")`.
+    #[test]
+    fn parse_cancel_error_in_the_documented_shape() {
+        let json = r#"[{"T":"x","S":"GOOGL","i":465,"x":"D","p":105.31,"s":300,"a":"C","z":"C","t":"2023-04-06T13:15:42.83540958Z"},{"T":"x","S":"GOOGL","i":466,"x":"D","p":105.31,"s":300,"a":"E","z":"C","t":"2023-04-06T13:15:42.83540958Z"}]"#;
+        let messages: Vec<DataMessage> = serde_json::from_str(json).unwrap();
+        let actions: Vec<_> = messages
+            .iter()
+            .map(|m| match m {
+                DataMessage::CancelError(x) => x.action.clone(),
+                other => panic!("expected cancel error, got {other:?}"),
+            })
+            .collect();
+        assert_eq!(
+            actions,
+            vec![
+                Some(CancelErrorAction::Canceled),
+                Some(CancelErrorAction::Errored)
+            ]
+        );
     }
 
     #[test]
